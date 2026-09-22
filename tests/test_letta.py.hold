@@ -1,0 +1,47 @@
+# pylint: disable=duplicate-code, consider-using-with, no-name-in-module
+"""
+This module contains tests for Letta functionality using the Letta Python library.
+
+Tests cover various API endpoints, including completions, chat completions,
+embeddings, fine-tuning job creation, image generation, image variation creation,
+and audio speech generation. These tests validate integration with Shield360.
+
+Environment Variables:
+    - OPENAI_API_KEY: OpenAI API key for authentication.
+
+Note: Ensure the environment is properly configured for OpenAI access and Shield360 monitoring
+prior to running these tests.
+"""
+
+from letta import EmbeddingConfig, LLMConfig, create_client
+import shield360
+
+# Initialize synchronous Letta client
+sync_client = create_client()
+
+# Initialize environment and application name for Shield360 monitoring
+shield360.init(environment="shield360-python-testing", application_name="shield360-python-letta-test")
+
+def test_sync_letta_agent_ops():
+    """
+    Tests synchronous agent creation and message
+
+    Raises:
+        AssertionError: If the response object is not as expected.
+    """
+
+    # set automatic defaults for LLM/embedding config
+    sync_client.set_default_llm_config(LLMConfig.default_config(model_name="gpt-4"))
+    sync_client.set_default_embedding_config(
+        EmbeddingConfig.default_config(
+            model_name="text-embedding-ada-002"
+        )
+    )
+
+    # create a new agent
+    response = sync_client.create_agent()
+    assert isinstance(response.name, str)
+
+    # Message an agent
+    response = sync_client.send_message(agent_id=response.id, role="user", message="hello")
+    assert isinstance(response.usage.total_tokens, int)

@@ -1,0 +1,89 @@
+# pylint: disable=duplicate-code, no-name-in-module
+"""
+This module contains tests for mem0 functionality using the mem0ai Python library.
+
+Tests cover various SDK functions. 
+These tests validate integration with Shield360.
+
+Environment Variables:
+    - OPENAI_API_KEY: OpenAI API key for authentication.
+
+Note: Ensure the environment is properly configured for mem0 and Shield360 monitoring
+prior to running these tests.
+"""
+
+from mem0 import Memory
+import shield360
+
+# Initialize synchronous mem0 client
+sync_memory = Memory()
+
+# Initialize environment and application name for Shield360 monitoring
+shield360.init(environment="shield360-python-testing", application_name="shield360-python-mem0-test")
+
+def test_sync_memory_add():
+    """
+    Tests synchronous addition to memory
+
+    Raises:
+        AssertionError: If the memory add response object is not as expected.
+    """
+
+    try:
+        response = sync_memory.add(
+            "Shield360 provides LLM Observability and Agent Observability",
+            user_id="shield360",
+            metadata={"category": "devtool"})
+        assert response[0]["event"] == "ADD"
+
+    # pylint: disable=broad-exception-caught, try-except-raise
+    except Exception:
+        raise
+
+def test_sync_memory_get_all():
+    """
+    Tests synchronous get all memory
+
+    Raises:
+        AssertionError: If the get all memory response object is not as expected.
+    """
+
+    try:
+        response = sync_memory.get_all(user_id="shield360")
+        assert response[0]["user_id"] == "shield360"
+
+    # pylint: disable=broad-exception-caught, try-except-raise
+    except Exception:
+        raise
+
+def test_sync_memory_get():
+    """
+    Tests synchronous get memory
+
+    Raises:
+        AssertionError: If the get memory response object is not as expected.
+    """
+
+    try:
+        response = sync_memory.get("bf4d4092-cf91-4181-bfeb-b6fa2ed3061b")
+        assert response is None
+
+    # pylint: disable=broad-exception-caught, try-except-raise
+    except Exception:
+        raise
+
+def test_sync_memory_search():
+    """
+    Tests synchronous search memory
+
+    Raises:
+        AssertionError: If the search memory response object is not as expected.
+    """
+
+    try:
+        response = sync_memory.search(query="What does Shield360 give?", user_id="shield360")
+        assert isinstance(response, list)
+
+    # pylint: disable=broad-exception-caught, try-except-raise
+    except Exception:
+        raise

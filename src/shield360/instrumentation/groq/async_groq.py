@@ -1,0 +1,420 @@
+"""
+Module for monitoring Groq API calls (async version).
+"""
+
+import time
+from opentelemetry import trace as trace_api, context as context_api
+from opentelemetry.trace import SpanKind
+from shield360.__helpers import (
+    handle_exception,
+    set_server_address_and_port,
+    record_completion_metrics,
+    safe_detach,
+)
+from shield360.instrumentation.groq.utils import (
+    process_chunk,
+    process_streaming_chat_response,
+    process_chat_response,
+    process_audio_response,
+    process_transcription_response,
+)
+from shield360.semcov import SemanticConvention
+
+
+def async_chat(
+    version,
+    environment,
+    application_name,
+    tracer,
+    pricing_info,
+    capture_message_content,
+    metrics,
+    disable_metrics,
+    event_provider=None,
+):
+    """
+    Generates a telemetry wrapper for GenAI function call
+    """
+
+    class TracedAsyncStream:
+        """
+        Wrapper for async streaming responses to collect telemetry.
+        """
+
+        def __init__(
+            self,
+            wrapped,
+            span,
+            span_name,
+            kwargs,
+            server_address,
+            server_port,
+            **args,
+        ):
+            self.__wrapped__ = wrapped
+            self._span = span
+            self._span_name = span_name
+            self._llmresponse = ""
+            self._response_id = ""
+            self._response_model = ""
+            self._finish_reason = ""
+            self._tools = None
+            self._system_fingerprint = ""
+            self._input_tokens = 0
+            self._output_tokens = 0
+            self._cache_read_input_tokens = 0
+            self._cache_creation_input_tokens = 0
+            self._args = args
+            self._kwargs = kwargs
+            self._start_time = time.time()
+            self._end_time = None
+            self._timestamps = []
+            self._ttft = 0
+            self._tbt = 0
+            self._server_address = server_address
+            self._server_port = server_port
+            self._streaming_response_processed = False
+
+        async def __aenter__(self):
+            await self.__wrapped__.__aenter__()
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            try:
+                await self.__wrapped__.__aexit__(exc_type, exc_value, traceback)
+            finally:
+                if exc_type:
+                    self._streaming_response_processed = True
+                    handle_exception(self._span, exc_value)
+                    if self._span.is_recording():
+                        self._span.end()
+                else:
+                    # A break before exhaustion never hits StopAsyncIteration,
+                    # so the span would leak without normal-exit finalization.
+                    self._finalize_streaming_span()
+
+        def __aiter__(self):
+            return self
+
+        def __getattr__(self, name):
+            """Delegate attribute access to the wrapped object."""
+            return getattr(self.__wrapped__, name)
+
+        async def __anext__(self):
+            try:
+                chunk = await self.__wrapped__.__anext__()
+                process_chunk(self, chunk)
+                return chunk
+            except StopAsyncIteration:
+                self._finalize_streaming_span()
+                raise
+
+        def _finalize_streaming_span(self):
+            """Complete and end the span exactly once.
+
+            Called on stream exhaustion and again from aclose()/manager exit;
+            the flag keeps the double call a no-op so early exits that never
+            see StopAsyncIteration still export the span instead of leaking it.
+            """
+            if self._streaming_response_processed:
+                return
+            self._streaming_response_processed = True
+            try:
+                with self._span:
+                    process_streaming_chat_response(
+                        self,
+                        pricing_info=pricing_info,
+                        environment=environment,
+                        application_name=application_name,
+                        metrics=metrics,
+                        capture_message_content=capture_message_content,
+                        disable_metrics=disable_metrics,
+                        version=version,
+                        event_provider=event_provider,
+                    )
+
+            except Exception as e:
+                handle_exception(self._span, e)
+
+        async def aclose(self):
+            """Close the wrapped stream and finalize the span if not ended."""
+            try:
+                await self.__wrapped__.aclose()
+            finally:
+                self._finalize_streaming_span()
+
+    async def wrapper(wrapped, instance, args, kwargs):
+        """
+        Wraps the GenAI function call.
+        """
+        # Check if streaming is enabled for the API call
+        streaming = kwargs.get("stream", False)
+        server_address, server_port = set_server_address_and_port(
+            instance, "api.groq.com", 443
+        )
+        request_model = kwargs.get("model", "mixtral-8x7b-32768")
+
+        span_name = f"{SemanticConvention.GEN_AI_OPERATION_TYPE_CHAT} {request_model}"
+
+        if streaming:
+            span = tracer.start_span(span_name, kind=SpanKind.CLIENT)
+            ctx = trace_api.set_span_in_context(span)
+            token = context_api.attach(ctx)
+            try:
+                awaited_wrapped = await wrapped(*args, **kwargs)
+            except Exception as e:
+                handle_exception(span, e)
+                safe_detach(token)
+                span.end()
+                raise
+            safe_detach(token)
+            return TracedAsyncStream(
+                awaited_wrapped, span, span_name, kwargs, server_address, server_port
+            )
+        else:
+            # Handling for non-streaming responses
+            with tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+                start_time = time.time()
+                response = await wrapped(*args, **kwargs)
+
+                try:
+                    response = process_chat_response(
+                        response=response,
+                        request_model=request_model,
+                        pricing_info=pricing_info,
+                        server_port=server_port,
+                        server_address=server_address,
+                        environment=environment,
+                        application_name=application_name,
+                        metrics=metrics,
+                        start_time=start_time,
+                        span=span,
+                        capture_message_content=capture_message_content,
+                        disable_metrics=disable_metrics,
+                        version=version,
+                        event_provider=event_provider,
+                        **kwargs,
+                    )
+
+                except Exception as e:
+                    handle_exception(span, e)
+                    if not disable_metrics and metrics:
+                        record_completion_metrics(
+                            metrics,
+                            SemanticConvention.GEN_AI_OPERATION_TYPE_CHAT,
+                            SemanticConvention.GEN_AI_SYSTEM_GROQ,
+                            server_address,
+                            server_port,
+                            request_model,
+                            "unknown",
+                            environment,
+                            application_name,
+                            start_time,
+                            time.time(),
+                            0,
+                            0,
+                            0,
+                            None,
+                            None,
+                            error_type=type(e).__name__ or "_OTHER",
+                        )
+
+                return response
+
+    return wrapper
+
+
+def async_audio_create(
+    version,
+    environment,
+    application_name,
+    tracer,
+    pricing_info,
+    capture_message_content,
+    metrics,
+    disable_metrics,
+    event_provider=None,
+):
+    """
+    Generates a telemetry wrapper for GenAI audio creation function call
+    """
+
+    async def wrapper(wrapped, instance, args, kwargs):
+        """
+        Wraps the GenAI audio creation function call.
+        """
+
+        server_address, server_port = set_server_address_and_port(
+            instance, "api.groq.com", 443
+        )
+        request_model = kwargs.get("model", "canopylabs/orpheus-v1-english")
+
+        span_name = f"{SemanticConvention.GEN_AI_OPERATION_TYPE_AUDIO} {request_model}"
+
+        with tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+            start_time = time.time()
+            try:
+                response = await wrapped(*args, **kwargs)
+            except Exception as e:
+                handle_exception(span, e)
+                raise
+            end_time = time.time()
+
+            try:
+                response = process_audio_response(
+                    response=response,
+                    request_model=request_model,
+                    pricing_info=pricing_info,
+                    server_port=server_port,
+                    server_address=server_address,
+                    environment=environment,
+                    application_name=application_name,
+                    metrics=metrics,
+                    start_time=start_time,
+                    end_time=end_time,
+                    span=span,
+                    capture_message_content=capture_message_content,
+                    disable_metrics=disable_metrics,
+                    version=version,
+                    event_provider=event_provider,
+                    **kwargs,
+                )
+
+            except Exception as e:
+                handle_exception(span, e)
+
+            return response
+
+    return wrapper
+
+
+def async_audio_transcription(
+    version,
+    environment,
+    application_name,
+    tracer,
+    pricing_info,
+    capture_message_content,
+    metrics,
+    disable_metrics,
+    event_provider=None,
+):
+    """
+    Generates a telemetry wrapper for GenAI audio transcription function call
+    """
+
+    async def wrapper(wrapped, instance, args, kwargs):
+        """
+        Wraps the GenAI audio transcription function call.
+        """
+
+        server_address, server_port = set_server_address_and_port(
+            instance, "api.groq.com", 443
+        )
+        request_model = kwargs.get("model", "whisper-large-v3")
+
+        span_name = (
+            f"{SemanticConvention.GEN_AI_OPERATION_TYPE_SPEECH_TO_TEXT} {request_model}"
+        )
+
+        with tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+            start_time = time.time()
+            try:
+                response = await wrapped(*args, **kwargs)
+            except Exception as e:
+                handle_exception(span, e)
+                raise
+            end_time = time.time()
+
+            try:
+                response = process_transcription_response(
+                    response=response,
+                    request_model=request_model,
+                    pricing_info=pricing_info,
+                    server_port=server_port,
+                    server_address=server_address,
+                    environment=environment,
+                    application_name=application_name,
+                    metrics=metrics,
+                    start_time=start_time,
+                    end_time=end_time,
+                    span=span,
+                    capture_message_content=capture_message_content,
+                    disable_metrics=disable_metrics,
+                    version=version,
+                    event_provider=event_provider,
+                    **kwargs,
+                )
+
+            except Exception as e:
+                handle_exception(span, e)
+
+            return response
+
+    return wrapper
+
+
+def async_audio_translation(
+    version,
+    environment,
+    application_name,
+    tracer,
+    pricing_info,
+    capture_message_content,
+    metrics,
+    disable_metrics,
+    event_provider=None,
+):
+    """
+    Generates a telemetry wrapper for GenAI audio translation function call
+    """
+
+    async def wrapper(wrapped, instance, args, kwargs):
+        """
+        Wraps the GenAI audio translation function call.
+        """
+
+        server_address, server_port = set_server_address_and_port(
+            instance, "api.groq.com", 443
+        )
+        request_model = kwargs.get("model", "whisper-large-v3")
+
+        span_name = (
+            f"{SemanticConvention.GEN_AI_OPERATION_TYPE_SPEECH_TO_TEXT} {request_model}"
+        )
+
+        with tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+            start_time = time.time()
+            try:
+                response = await wrapped(*args, **kwargs)
+            except Exception as e:
+                handle_exception(span, e)
+                raise
+            end_time = time.time()
+
+            try:
+                response = process_transcription_response(
+                    response=response,
+                    request_model=request_model,
+                    pricing_info=pricing_info,
+                    server_port=server_port,
+                    server_address=server_address,
+                    environment=environment,
+                    application_name=application_name,
+                    metrics=metrics,
+                    start_time=start_time,
+                    end_time=end_time,
+                    span=span,
+                    capture_message_content=capture_message_content,
+                    disable_metrics=disable_metrics,
+                    version=version,
+                    event_provider=event_provider,
+                    **kwargs,
+                )
+
+            except Exception as e:
+                handle_exception(span, e)
+
+            return response
+
+    return wrapper
