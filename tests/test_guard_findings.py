@@ -32,7 +32,13 @@ def test_masks_show_no_character_of_the_value():
 def test_token_vectors_match_guard_core():
     import pathlib
 
-    path = pathlib.Path(__file__).resolve().parents[2] / "guard-core" / "testdata" / "tokens.json"
+    here = pathlib.Path(__file__).resolve()
+    # Beside this SDK in the monorepo (sdk/guard-core), or inside the SDK's public mirror (guard-core/).
+    candidates = [
+        here.parents[2] / "guard-core" / "testdata" / "tokens.json",
+        here.parents[1] / "guard-core" / "testdata" / "tokens.json",
+    ]
+    path = next((p for p in candidates if p.exists()), candidates[0])
     for case in json.loads(path.read_text())["cases"]:
         assert _findings.token(case["kind"], case["fingerprint"]) == case["token"]
 
