@@ -21,7 +21,7 @@ payloads and assert that:
   * ``gen_ai.tool.name`` / ``gen_ai.tool.call.id`` / ``gen_ai.tool.args`` are
     set and correct for both a single call and two parallel calls.
 
-Fixes: https://github.com/openlit/openlit/issues/1438
+Regression guarded: a tool-call list crashed span attribution and dropped tool attributes.
 """
 
 import time

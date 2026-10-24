@@ -7,7 +7,7 @@ deltas that had no content), so common_chat_logic never emitted tool span
 attributes. These tests drive the real process_chunk helpers with synthetic
 OpenAI-compatible chunks.
 
-Fixes: https://github.com/openlit/openlit/issues/1540
+Regression guarded: streamed tool calls produced spans with no tool attributes.
 """
 
 from types import SimpleNamespace

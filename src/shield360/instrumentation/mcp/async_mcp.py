@@ -125,6 +125,14 @@ def async_mcp_wrap(
 
                 try:
                     # Async MCP operations - maintain proper async context
+                    # Shield Protect: a client's tools/call is checked before it is sent; a refusal never reaches the server.
+                    if gen_ai_endpoint == "client call_tool":
+                        from shield360.protect._mcp import check_mcp_tool_call
+
+                        check_mcp_tool_call(
+                            kwargs.get("name", args[0] if args else "unknown"),
+                            kwargs.get("arguments", args[1] if len(args) > 1 else None),
+                        )
                     response = await wrapped(*args, **kwargs)
 
                 except Exception as e:

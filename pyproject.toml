@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "shield360"
-version = "1.0.0"
+version = "1.1.0"
 description = "OpenTelemetry-native Auto instrumentation library for monitoring LLM Applications and GPUs, facilitating the integration of observability into your GenAI-driven projects"
 authors = ["Shield360 <developer@shield360.ai>"]
 license = "Apache-2.0"

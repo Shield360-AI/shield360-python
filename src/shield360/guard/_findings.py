@@ -1,10 +1,10 @@
 """
 What a reviewer may see of a sensitive value a guard found.
 
-A *finding* is a value's kind, a masked form (the last four digits of an SSN,
-the prefix of an API key) and a fingerprint that is the same every time the
-same value turns up, in this app or anywhere else in the organisation. The
-value itself is never kept or reported.
+A *finding* is a value's kind, a token (``[api_key:fp_3f9c2a1b]``, see
+``token()``) and a fingerprint that is the same every time the same value
+turns up, in this app or anywhere else in the organisation. No character of
+the value is ever kept or reported.
 
 The fingerprint is an HMAC keyed with the organisation's secret, which
 Shield360 hands to apps with an API key. Unkeyed, a fingerprint could be
@@ -77,49 +77,30 @@ def fingerprint(label: str, value: str) -> str:
     return digest.hexdigest()[:16]
 
 
+TOKEN_PRINT_LENGTH = 8
+_HEX = re.compile(r"^[0-9a-f]+$")
+
+
+def token(kind: str, fp: str = "") -> str:
+    """What is kept of a value: ``[kind:fp_<8 hex>]``, or ``[kind]`` without a key.
+
+    No character of the value is part of it: a key's prefix and last four or a
+    card's last four help an attacker narrow a guess. Byte-compatible with
+    guard-core's ``token()`` and the Go guard's ``Token()``.
+    """
+    if fp and len(fp) >= TOKEN_PRINT_LENGTH and _HEX.match(fp):
+        return f"[{kind}:fp_{fp[:TOKEN_PRINT_LENGTH]}]"
+    return f"[{kind}]"
+
+
 def mask(label: str, value: str) -> str:
-    """Enough of a value to recognise it, never enough to use it."""
-    v = value.strip()
-    kind = canonical_kind(label)
-    if kind == "ssn":
-        return "***-**-" + _digits(v)[-4:]
-    if kind == "payment_card":
-        return "•••• " + _digits(v)[-4:]
-    if kind == "phone-us":
-        return "***-***-" + _digits(v)[-4:]
-    if kind == "private_key":
-        return v
-    if kind == "email":
-        local, _, domain = v.partition("@")
-        return (local[:1] + "***@" + domain) if domain else "***"
-    if kind == "ipv4":
-        parts = v.split(".")
-        return ".".join(parts[:2] + ["x", "x"]) if len(parts) == 4 else "x.x.x.x"
-    if kind == "connection_string":
-        m = re.match(r"^([a-z+]+://[^:/@\s]+:)[^@\s]*(@.*)?$", v, re.IGNORECASE)
-        if m:
-            return m.group(1) + "****@" + (m.group(2) or "@")[1:].split("/")[0]
-        return re.split(r"://", v)[0] + "://****"
-    if kind == "password":
-        m = re.search(r"[:=]", v)
-        name = v[: m.start()].strip(" \"'") if m else ""
-        return f"{name} = ••••••••" if name else "••••••••"
-    if kind in ("bearer-token", "basic-auth"):
-        scheme = v.split()[0] if v.split() else ""
-        return f"{scheme} …{v[-4:]}"
-    # Keys and tokens: the public prefix names the service, the last four
-    # tell two keys apart.
-    prefix = v[:12]
-    cut = max(prefix.rfind("-"), prefix.rfind("_"))
-    prefix = prefix[: cut + 1] if cut >= 2 else prefix[:4]
-    if len(v) <= len(prefix) + 4:
-        return prefix + "…"
-    return prefix + "…" + v[-4:]
+    """The token for a value under the current key; never any character of it."""
+    return token(canonical_kind(label), fingerprint(label, value))
 
 
 def make(label: str, value: str) -> Dict[str, str]:
-    finding = {"kind": label, "masked": mask(label, value)}
     fp = fingerprint(label, value)
+    finding = {"kind": label, "masked": token(canonical_kind(label), fp)}
     if fp:
         finding["fingerprint"] = fp
     return finding

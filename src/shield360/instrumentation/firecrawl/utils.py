@@ -107,14 +107,10 @@ class FirecrawlInstrumentationContext:
 
     @property
     def api_key_masked(self) -> str:
-        """Get masked API key for security."""
+        """Whether an API key is set; no character of it is ever kept."""
         if self._api_key_masked is None:
             if hasattr(self.instance, "api_key") and self.instance.api_key:
-                key = self.instance.api_key
-                if len(key) > 8:
-                    self._api_key_masked = f"{key[:4]}...{key[-4:]}"
-                else:
-                    self._api_key_masked = "***"
+                self._api_key_masked = "[api_key]"
             else:
                 self._api_key_masked = "unknown"
         return self._api_key_masked

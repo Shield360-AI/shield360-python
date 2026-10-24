@@ -141,7 +141,14 @@ _GEN_AI_CLIENT_OPERATION_TIME_PER_OUTPUT_CHUNK = (
 )
 
 
-def setup_meter(application_name, environment, meter, otlp_endpoint, otlp_headers):
+def setup_meter(
+    application_name,
+    environment,
+    meter,
+    otlp_endpoint,
+    otlp_headers,
+    resource_attributes=None,
+):
     """
     Sets up OpenTelemetry metrics with a counter for total requests.
 
@@ -149,6 +156,7 @@ def setup_meter(application_name, environment, meter, otlp_endpoint, otlp_header
         application_name (str): The name of the application for which metrics are being collected.
         otlp_endpoint (str): The OTLP exporter endpoint for metrics.
         otlp_headers (dict): Headers for the OTLP request.
+        resource_attributes (dict): Extra resource attributes (build/VCS).
 
     Returns:
         A dictionary containing the meter and created metrics for easy access.
@@ -171,6 +179,7 @@ def setup_meter(application_name, environment, meter, otlp_endpoint, otlp_header
                         SERVICE_NAME: application_name,
                         DEPLOYMENT_ENVIRONMENT: environment,
                         TELEMETRY_SDK_NAME: "shield360",
+                        **(resource_attributes or {}),
                     }
                 )
 

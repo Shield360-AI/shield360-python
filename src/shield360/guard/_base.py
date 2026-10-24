@@ -151,6 +151,11 @@ class Guard(ABC):
         """The configured action this guard applies on a violation."""
         return self._action
 
+    @property
+    def max_scan_length(self) -> int:
+        """The most characters this guard reads; 0 means all of them."""
+        return self._max_scan_length
+
     def supports_phase(self, phase: GuardPhase) -> bool:
         """Return True if this guard runs in the given pipeline phase."""
         return phase in self.phases

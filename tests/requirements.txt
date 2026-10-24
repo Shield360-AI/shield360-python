@@ -2,14 +2,14 @@
 pytest
 pytest-asyncio
 requests>=2.34.2
-urllib3>=2.7.0
+urllib3>=2.8.0
 schedule
 pylint
 
 # Gen AI
-langchain-core>=1.6.3
-langchain>=1.4.0,<2.0.0
-langgraph>=1.2.11,<2.0.0
+langchain-core>=1.6.9
+langchain>=1.4.4,<2.0.0
+langgraph>=1.2.14,<2.0.0
 cohere
 openai
 anthropic
@@ -25,7 +25,7 @@ together
 transformers
 groq
 elevenlabs
-crewai>=1.15.21
+crewai>=1.15.27
 agno
 
 # Vector DBs

@@ -117,6 +117,14 @@ def mcp_wrap(
                 # This is critical for proper span hierarchy in MCP operations
                 if span_kind == SpanKind.CLIENT:
                     # MCP client operations might spawn threads, ensure context propagation
+                    # Shield Protect: a client's tools/call is checked before it is sent; a refusal never reaches the server.
+                    if gen_ai_endpoint == "client call_tool":
+                        from shield360.protect._mcp import check_mcp_tool_call
+
+                        check_mcp_tool_call(
+                            kwargs.get("name", args[0] if args else "unknown"),
+                            kwargs.get("arguments", args[1] if len(args) > 1 else None),
+                        )
                     response = wrapped(*args, **kwargs)
                 else:
                     # Server operations typically don't need threading fixes

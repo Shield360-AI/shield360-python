@@ -35,9 +35,17 @@ from shield360.guard._base import (
     Guard,
     GuardAction,
     GuardDeniedError,
+    GuardPhase,
     PipelineResult,
 )
 from shield360.guard._pipeline import Pipeline
+from shield360.protect._mode import (
+    ProtectDeniedError,
+    ProtectReadinessError,
+    ResolvedProtect,
+    refuses,
+    set_protect_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,18 +55,36 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _content_text(content: Any) -> List[str]:
+    """The text in a message's content: a string, or the text parts of a list of blocks."""
+    if isinstance(content, str):
+        return [content] if content else []
+    if not isinstance(content, list):
+        return []
+    out: List[str] = []
+    for block in content:
+        if isinstance(block, str):
+            out.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            out.append(block["text"])
+    return out
+
+
 def _extract_openai_input(kwargs: Dict[str, Any]) -> str:
     messages = kwargs.get("messages") or kwargs.get("input") or []
-    if isinstance(messages, str):
-        return messages
     parts: List[str] = []
-    for m in messages:
-        if isinstance(m, dict):
-            content = m.get("content", "")
-            if isinstance(content, str):
-                parts.append(content)
-        elif isinstance(m, str):
-            parts.append(m)
+    # The Responses API's instructions are a system prompt: scanned like one.
+    instructions = kwargs.get("instructions")
+    if isinstance(instructions, str) and instructions:
+        parts.append(instructions)
+    if isinstance(messages, str):
+        parts.append(messages)
+    else:
+        for m in messages:
+            if isinstance(m, dict):
+                parts.extend(_content_text(m.get("content", "")))
+            elif isinstance(m, str):
+                parts.append(m)
     return " ".join(parts)
 
 
@@ -91,6 +117,8 @@ def _extract_openai_output(response: Any) -> str:
 def _extract_anthropic_input(kwargs: Dict[str, Any]) -> str:
     messages = kwargs.get("messages", [])
     parts: List[str] = []
+    # The system prompt is input too: a string, or text blocks.
+    parts.extend(_content_text(kwargs.get("system")))
     for m in messages:
         if isinstance(m, dict):
             content = m.get("content", "")
@@ -331,20 +359,67 @@ def _redact_messages(pipeline: Pipeline, value: Any, phase: str) -> Any:
     return out
 
 
+def _evaluate_under(
+    pipeline: Pipeline,
+    text: str,
+    phase: str,
+    protect: Optional[ResolvedProtect],
+) -> PipelineResult:
+    """Shield Protect: what a mode does with a pipeline result, and with a pipeline that failed.
+
+    No mode (legacy): a DENY raises, as it always did. observe: recorded, the
+    call goes on. warn: as observe, and logged. enforced: a DENY raises; a
+    failed pipeline raises (fail closed), whatever ``fail_open`` says; text
+    past the scan bound raises rather than being scanned in part.
+    """
+    mode = protect.mode if protect else None
+    bound = pipeline.scan_bound()
+    if refuses(mode) and 0 < bound < len(text):
+        raise ProtectDeniedError(
+            "oversized",
+            f"Shield360 Protect refused the call: {len(text)} characters is more than its guards scan ({bound}); send less.",
+        )
+    try:
+        result = pipeline.evaluate(text, phase=phase)
+    except Exception as exc:
+        if refuses(mode):
+            raise ProtectDeniedError(
+                "guard_failed",
+                "Shield360 Protect refused the call: a guard failed and enforced mode does not run unchecked calls.",
+            ) from exc
+        raise
+    if result.action == GuardAction.DENY:
+        if mode is None or refuses(mode):
+            raise GuardDeniedError(result)
+        if mode == "warn":
+            logger.warning("Shield360 Protect (warn mode): the call would have been refused at %s: %s", phase, result.explanation)
+        return PipelineResult(action=GuardAction.WARN, results=result.results, transformed_text=result.transformed_text)
+    return result
+
+
 def _apply_preflight(
     pipeline: Pipeline,
     kwargs: Dict[str, Any],
     extract_input: Extractor,
+    protect: Optional[ResolvedProtect] = None,
 ) -> Tuple[Dict[str, Any], Optional[PipelineResult]]:
     """Run preflight guards. Returns (possibly-modified kwargs, result_or_None)."""
     input_text = extract_input(kwargs)
     if not input_text:
         return kwargs, None
 
-    result = pipeline.evaluate(input_text, phase="preflight")
+    # A streamed completion cannot be inspected after the fact. Enforced mode
+    # with postflight guards refuses it rather than let the response through
+    # unread; with preflight-only guards the stream is fine.
+    enforced = protect is not None and refuses(protect.mode)
+    if enforced and kwargs.get("stream") is True and pipeline.has_phase(GuardPhase.POSTFLIGHT.value):
+        raise ProtectDeniedError(
+            "streaming",
+            "Shield360 Protect refused a streamed completion: postflight guards cannot inspect a stream. "
+            "Call without stream, or configure preflight-only guards.",
+        )
 
-    if result.action == GuardAction.DENY:
-        raise GuardDeniedError(result)
+    result = _evaluate_under(pipeline, input_text, "preflight", protect)
 
     if result.action == GuardAction.REDACT and result.transformed_text is not None:
         for key in ("messages", "input", "prompt", "text"):
@@ -365,6 +440,7 @@ def _apply_postflight(
     pipeline: Pipeline,
     response: Any,
     extract_output: Extractor,
+    protect: Optional[ResolvedProtect] = None,
 ) -> Any:
     """Run postflight guards on the response. Applies REDACT to response content.
 
@@ -375,10 +451,7 @@ def _apply_postflight(
     if not output_text:
         return response
 
-    result = pipeline.evaluate(output_text, phase="postflight")
-
-    if result.action == GuardAction.DENY:
-        raise GuardDeniedError(result)
+    result = _evaluate_under(pipeline, output_text, "postflight", protect)
 
     if result.action == GuardAction.REDACT and result.transformed_text is not None:
         try:
@@ -429,11 +502,12 @@ def _make_sync_guard_wrapper(
     pipeline: Pipeline,
     extract_input: Extractor,
     extract_output: Extractor,
+    protect: Optional[ResolvedProtect] = None,
 ):
     def _guard_wrapper(wrapped, instance, args, kwargs):
-        kwargs, _ = _apply_preflight(pipeline, kwargs, extract_input)
+        kwargs, _ = _apply_preflight(pipeline, kwargs, extract_input, protect)
         response = wrapped(*args, **kwargs)
-        response = _apply_postflight(pipeline, response, extract_output)
+        response = _apply_postflight(pipeline, response, extract_output, protect)
         return response
 
     return _guard_wrapper
@@ -443,11 +517,12 @@ def _make_async_guard_wrapper(
     pipeline: Pipeline,
     extract_input: Extractor,
     extract_output: Extractor,
+    protect: Optional[ResolvedProtect] = None,
 ):
     async def _async_guard_wrapper(wrapped, instance, args, kwargs):
-        kwargs, _ = _apply_preflight(pipeline, kwargs, extract_input)
+        kwargs, _ = _apply_preflight(pipeline, kwargs, extract_input, protect)
         response = await wrapped(*args, **kwargs)
-        response = _apply_postflight(pipeline, response, extract_output)
+        response = _apply_postflight(pipeline, response, extract_output, protect)
         return response
 
     return _async_guard_wrapper
@@ -461,28 +536,45 @@ def _make_async_guard_wrapper(
 def setup_auto_guards(
     guards: List[Guard],
     fail_open: bool = True,
-) -> None:
+    protect: Optional[ResolvedProtect] = None,
+) -> Tuple[List[str], List[str]]:
     """
     Wrap all known LLM provider methods with guard logic.
 
     Called from ``shield360.init()`` *after* all normal instrumentors have run.
+    Returns the top-level packages that were wrapped and the required ones
+    that were not.
+
+    Shield Protect: in enforced mode the pipeline fails closed (``fail_open``
+    is overridden, with a warning when it was set), and a package named in
+    ``protect.required`` that could not be wrapped raises
+    ProtectReadinessError: protected startup fails rather than running
+    unguarded. Only providers importable when init() runs are wrapped; name
+    the ones that matter in ``required`` so a missing one is a failure, not a
+    silent gap.
     """
-    pipeline = Pipeline(guards=guards, fail_open=fail_open)
+    effective_fail_open = fail_open
+    if protect is not None and refuses(protect.mode) and fail_open:
+        logger.warning("Shield360 Protect: enforced mode fails closed; guard_fail_open is ignored.")
+        effective_fail_open = False
+    pipeline = Pipeline(guards=guards, fail_open=effective_fail_open)
 
     from shield360._config import Shield360Config
 
     Shield360Config.guard_pipeline = pipeline
 
-    wrapped_count = 0
+    wrapped: List[str] = []
     for module_path, class_method, extract_in, extract_out in GUARDED_METHODS:
         try:
             if _is_async_method(module_path, class_method):
-                wrapper = _make_async_guard_wrapper(pipeline, extract_in, extract_out)
+                wrapper = _make_async_guard_wrapper(pipeline, extract_in, extract_out, protect)
             else:
-                wrapper = _make_sync_guard_wrapper(pipeline, extract_in, extract_out)
+                wrapper = _make_sync_guard_wrapper(pipeline, extract_in, extract_out, protect)
 
             wrap_function_wrapper(module_path, class_method, wrapper)
-            wrapped_count += 1
+            package = module_path.split(".", maxsplit=1)[0]
+            if package not in wrapped:
+                wrapped.append(package)
         except Exception:
             logger.debug(
                 "Could not wrap %s.%s with guard — module likely not installed",
@@ -490,8 +582,14 @@ def setup_auto_guards(
                 class_method,
             )
 
-    logger.info(
-        "Auto-guards: wrapped %d/%d provider methods",
-        wrapped_count,
-        len(GUARDED_METHODS),
-    )
+    required = list(protect.required) if protect else []
+    missing = [pkg for pkg in required if pkg not in wrapped]
+    set_protect_state(protect.mode if protect else None, wrapped, missing)
+    logger.info("Auto-guards: wrapped %d provider package(s): %s", len(wrapped), ", ".join(wrapped))
+    if protect is not None and refuses(protect.mode) and missing:
+        raise ProtectReadinessError(
+            missing,
+            f"Shield360 Protect: enforced mode requires guards on {', '.join(missing)}, "
+            "which could not be wrapped (not installed, or not importable). Protected startup refused.",
+        )
+    return wrapped, missing

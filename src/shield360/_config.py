@@ -43,7 +43,7 @@ class Shield360Config:
         cls.otlp_endpoint = None
         cls.otlp_headers = None
         cls.disable_batch = False
-        cls.capture_message_content = True
+        cls.capture_message_content = False
         cls.disable_metrics = False
         cls.disable_events = False
         cls.capture_db_parameters = False

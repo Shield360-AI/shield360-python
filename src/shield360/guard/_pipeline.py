@@ -42,6 +42,20 @@ class Pipeline:
         """Return a shallow copy of the configured guards in pipeline order."""
         return list(self._guards)
 
+    def has_phase(self, phase: str) -> bool:
+        """Whether any guard runs in ``phase``."""
+        guard_phase = GuardPhase(phase)
+        return any(g.supports_phase(guard_phase) for g in self._guards)
+
+    def scan_bound(self) -> int:
+        """The most characters every guard reads: the smallest positive ``max_scan_length``, or 0 for all of it.
+
+        Text past it is scanned in part by at least one guard; Shield Protect's
+        enforced mode refuses such text instead.
+        """
+        bounds = [g.max_scan_length for g in self._guards if g.max_scan_length > 0]
+        return min(bounds) if bounds else 0
+
     def evaluate(self, text: str, phase: str = "preflight") -> PipelineResult:
         """Run every guard that supports ``phase`` and aggregate the results."""
         guard_phase = GuardPhase(phase)

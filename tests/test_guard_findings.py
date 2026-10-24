@@ -18,13 +18,23 @@ def teardown_function():
     _findings.set_key(None)
 
 
-def test_masks_show_enough_to_recognise_not_to_use():
-    assert _findings.mask("ssn", SSN) == "***-**-6789"
-    assert _findings.mask("credit-card", CARD) == "•••• 1111"
-    masked_key = _findings.mask("openai-api-key", OPENAI)
-    assert masked_key.startswith("sk-proj-") and masked_key.endswith("0123") and "abcdef" not in masked_key
-    assert _findings.mask("email", "ana@acme.test") == "a***@acme.test"
-    assert _findings.mask("env-secret", "pass" + "word=Hunter2Hunter2!") == "pass" + "word = ••••••••"
+def test_masks_show_no_character_of_the_value():
+    assert _findings.mask("ssn", SSN) == "[ssn]"
+    assert _findings.mask("credit-card", CARD) == "[payment_card]"
+    assert _findings.mask("openai-api-key", OPENAI) == "[api_key]"
+    assert _findings.mask("email", "ana@acme.test") == "[email]"
+    assert _findings.mask("env-secret", "pass" + "word=Hunter2Hunter2!") == "[password]"
+    _findings.set_key("org-secret")
+    fp = _findings.fingerprint("openai-api-key", OPENAI)
+    assert _findings.mask("openai-api-key", OPENAI) == f"[api_key:fp_{fp[:8]}]"
+
+
+def test_token_vectors_match_guard_core():
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[2] / "guard-core" / "testdata" / "tokens.json"
+    for case in json.loads(path.read_text())["cases"]:
+        assert _findings.token(case["kind"], case["fingerprint"]) == case["token"]
 
 
 def test_fingerprints_are_keyed_and_match_the_cli():
@@ -45,7 +55,7 @@ def test_pii_results_carry_findings_not_values():
         f"SSN {SSN}, card {CARD}", phase=GuardPhase.PREFLIGHT
     )
     masked = {f["kind"]: f["masked"] for f in result.findings}
-    assert masked["ssn"] == "***-**-6789"
+    assert masked["ssn"] == "[ssn:fp_" + _findings.fingerprint("ssn", SSN)[:8] + "]"
     assert all(f.get("fingerprint") for f in result.findings if f["kind"] in ("ssn", "credit-card"))
     assert SSN not in json.dumps(result.findings) and CARD not in json.dumps(result.findings)
 
@@ -64,6 +74,6 @@ def test_reports_carry_masked_findings(monkeypatch):
     Pipeline(guards=[PII(action="redact")]).evaluate(f"my SSN is {SSN}", phase="preflight")
     attrs = sent[0]["attrs"]
     findings = json.loads(attrs["shield360.guard.findings"])
-    assert findings[0]["masked"] == "***-**-6789"
+    assert findings[0]["masked"] == "[ssn:fp_" + findings[0]["fingerprint"][:8] + "]"
     assert attrs["shield360.guard.fingerprints"] == findings[0]["fingerprint"]
     assert SSN not in json.dumps(sent)

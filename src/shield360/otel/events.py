@@ -39,6 +39,7 @@ def setup_events(
     otlp_endpoint,
     otlp_headers,
     disable_batch,
+    resource_attributes=None,
 ):
     """Setup OpenTelemetry events with the given configuration.
 
@@ -48,6 +49,7 @@ def setup_events(
         event_logger: Optional pre-configured Logger instance
         otlp_endpoint: Optional OTLP endpoint for exporter
         otlp_headers: Optional headers for OTLP exporter
+        resource_attributes: Optional extra resource attributes (build/VCS)
 
     Returns:
         Logger: The configured OTel Logger for emitting events as LogRecords
@@ -72,6 +74,7 @@ def setup_events(
                         SERVICE_NAME: application_name,
                         DEPLOYMENT_ENVIRONMENT: environment,
                         TELEMETRY_SDK_NAME: "shield360",
+                        **(resource_attributes or {}),
                     }
                 )
 

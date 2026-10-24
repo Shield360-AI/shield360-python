@@ -179,12 +179,50 @@ Below is a detailed overview of the configuration options available, allowing yo
 | `otlp_endpoint`         | Specifies the OTLP endpoint for transmitting telemetry data.                                  | `None`         |    No    |
 | `otlp_headers`          | Defines headers for the OTLP exporter, useful for backends requiring authentication.          | `None`         |    No    |
 | `disable_batch`         | A flag to disable batch span processing, favoring immediate dispatch.                         | `False`        |    No    |
-| `capture_message_content`         | Enables tracing of content for deeper insights.                                               | `True`         |    No    |
+| `capture_message_content`         | Records prompt and completion text. Off unless set here or with `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`. | `False`        |    No    |
 | `disabled_instrumentors`| List of instrumentors to disable. | `None` |    No    |
 | `disable_metrics`       | If set, disables the collection of metrics.                                                   | `False`        |    No    |
 | `pricing_json`          | URL or file path of the pricing JSON file.                                             | Bundled `pricing.json`        |    No    |
 | `collect_gpu_stats`          | Flag to enable or disable GPU metrics collection.                                         | `False`        |    No    |
 | `custom_metrics_attributes`  | Custom key-value attributes applied to every metric recording. Useful for grouping metrics by custom tags (e.g., client ID, team, project). | `None` |    No    |
+
+> **Message content is off by default.** Prompt and completion text is recorded only when you pass `capture_message_content=True` (or set `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`). Even then, Shield360 stores it only if your organisation's [Data retention](https://shield360.ai) setting allows it. Before this release the default was on.
+
+### Code location and release attributes
+
+Shield360 can show AI cost by the code that caused it. To do that, the SDK records where each GenAI call was made and which build made it.
+
+**Code location (span attributes).** Every GenAI span gets three attributes for the first frame in your code. Frames inside Shield360, OpenTelemetry, the standard library and installed packages are skipped.
+
+| Attribute | Example |
+| --- | --- |
+| `code.function.name` | `app.billing.summarise_cart` |
+| `code.file.path` | `app/billing.py` (relative to the code root, the git root or the working directory; no home directory or CI workspace prefix is sent) |
+| `code.line.number` | `42` |
+
+Only names, paths and line numbers are recorded. Arguments, local variables and source text are never recorded. Spans that are not GenAI spans are not changed, and existing `code.*` attributes are kept.
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `capture_code_location=False` turns it off | `SHIELD360_CAPTURE_CODE_LOCATION=false` (or `0`, `no`, `off`) | On |
+| `code_root="/srv/app"` sets the directory paths are relative to | `SHIELD360_CODE_ROOT` | Git root, then working directory |
+
+The `init()` option wins over the environment variable.
+
+**Release and commit (resource attributes).** These are worked out once, when `init()` runs:
+
+| Attribute | Source, first match wins |
+| --- | --- |
+| `service.version` | `service_version=` option, `SHIELD360_SERVICE_VERSION`, `OTEL_SERVICE_VERSION`, `OTEL_RESOURCE_ATTRIBUTES` |
+| `vcs.ref.head.revision` | `SHIELD360_GIT_COMMIT`, `OTEL_RESOURCE_ATTRIBUTES`, CI variables |
+| `vcs.repository.url.full` | `SHIELD360_GIT_REPOSITORY_URL`, `OTEL_RESOURCE_ATTRIBUTES`, CI variables |
+| `vcs.ref.head.name` | `SHIELD360_GIT_BRANCH`, `OTEL_RESOURCE_ATTRIBUTES`, CI variables |
+
+The SDK reads CI variables from GitHub Actions, GitLab CI, Vercel, Netlify, Render, Railway, Heroku, AWS CodeBuild, Buildkite, CircleCI, Bitbucket Pipelines, Azure Pipelines and Jenkins (`GIT_COMMIT`). An explicit `OTEL_RESOURCE_ATTRIBUTES` value beats CI auto-detection. Only the first provider with a commit set is used, so values from different providers are never mixed. A commit must be a 7 to 64 character hex SHA. Repository URLs are sent as `https://host/owner/repo`, with user names, passwords and tokens removed.
+
+```python
+shield360.init(service_version="2.3.1")  # or set SHIELD360_SERVICE_VERSION at deploy time
+```
 
 ### Shield360 Prompt Hub - `shield360.get_prompt()`
 

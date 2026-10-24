@@ -18,6 +18,7 @@ from opentelemetry.sdk.trace.export import (
     ConsoleSpanExporter,
 )
 from shield360.__helpers import parse_exporters
+from shield360.otel.code_location import CodeLocationSpanProcessor, capture_enabled
 
 # pylint: disable=ungrouped-imports
 if os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "grpc":
@@ -33,11 +34,24 @@ TRACER_SET = False
 
 
 def setup_tracing(
-    application_name, environment, tracer, otlp_endpoint, otlp_headers, disable_batch
+    application_name,
+    environment,
+    tracer,
+    otlp_endpoint,
+    otlp_headers,
+    disable_batch,
+    resource_attributes=None,
+    capture_code_location=None,
+    code_root=None,
 ):
     """
     Sets up tracing with OpenTelemetry.
     Initializes the tracer provider and configures the span processor and exporter.
+
+    ``resource_attributes`` (build/VCS attributes) are merged into a new
+    provider's resource. Unless ``capture_code_location`` (or the
+    SHIELD360_CAPTURE_CODE_LOCATION env var) turns it off, GenAI spans get the
+    application call site as code.* attributes.
     """
 
     # If an external tracer is provided, return it immediately.
@@ -64,6 +78,7 @@ def setup_tracing(
                         SERVICE_NAME: application_name,
                         DEPLOYMENT_ENVIRONMENT: environment,
                         TELEMETRY_SDK_NAME: "shield360",
+                        **(resource_attributes or {}),
                     }
                 )
 
@@ -131,6 +146,12 @@ def setup_tracing(
                         span_processor = SimpleSpanProcessor(span_exporter)
 
                     trace.get_tracer_provider().add_span_processor(span_processor)
+
+            provider = trace.get_tracer_provider()
+            if capture_enabled(capture_code_location) and hasattr(
+                provider, "add_span_processor"
+            ):
+                provider.add_span_processor(CodeLocationSpanProcessor(code_root=code_root))
 
             TRACER_SET = True
 

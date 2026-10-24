@@ -21,6 +21,7 @@ from shield360.semcov import SemanticConvention
 from shield360.otel.tracing import setup_tracing
 from shield360.otel.metrics import setup_meter
 from shield360.otel.events import setup_events
+from shield360.otel.build_info import resolve_build_attributes
 from shield360.__helpers import (
     fetch_pricing_info,
     get_env_variable,
@@ -34,6 +35,7 @@ from shield360.__helpers import (
     record_agent_tool_error,
 )
 from shield360._config import Shield360Config  # noqa: F401 — re-exported for public API
+from shield360._destination import resolve_destination
 from shield360._instrumentors import (
     MODULE_NAME_MAP,
     get_all_instrumentors,
@@ -49,6 +51,15 @@ import shield360.evals
 
 # Re-export guard classes at top level for clean API:
 #   shield360.PII(action="redact")  instead of  shield360.guard.PII(action="redact")
+# Shield Protect re-exports: enforcement APIs, apart from the tracing ones.
+from shield360.protect import (  # noqa: F401 — public re-exports
+    protect_tool,
+    authorize_with_shield360,
+    protect_readiness,
+    ProtectError,
+    ProtectDeniedError,
+    ProtectReadinessError,
+)
 from shield360.guard import (  # noqa: F401 — public re-exports
     PII,
     PromptInjection,
@@ -199,7 +210,7 @@ def init(
     otlp_endpoint=None,
     otlp_headers=None,
     disable_batch=False,
-    capture_message_content=True,
+    capture_message_content=None,
     disabled_instrumentors=None,
     disable_metrics=False,
     disable_events=False,
@@ -216,6 +227,10 @@ def init(
     *,
     guards=None,
     guard_fail_open=True,
+    protect=None,
+    service_version=None,
+    capture_code_location=None,
+    code_root=None,
 ):
     """
     Initializes the shield360 configuration and setups tracing.
@@ -231,7 +246,9 @@ def init(
         otlp_endpoint (str): OTLP endpoint for exporter (Optional).
         otlp_headers (Dict[str, str]): OTLP headers for exporter (Optional).
         disable_batch (bool): Flag to disable batch span processing (Optional).
-        capture_message_content (bool): Flag to trace content (Optional).
+        capture_message_content (bool): Flag to trace prompt and completion
+            content (Optional). Off unless set here, in the config file or
+            environment, or with OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true.
         disabled_instrumentors (List[str]): Optional. List of instrumentor names to disable.
                                           Common aliases are resolved automatically (e.g. "aiohttp"
                                           maps to "aiohttp-client"). Note: "urllib3" must be disabled
@@ -261,6 +278,23 @@ def init(
                        that automatically run on every LLM call.  Optional.
         guard_fail_open (bool): If True (default), guard errors resolve to allow.
                                 Set to False for strict environments.
+        protect (dict): Shield Protect: ``{"mode": "observe" | "warn" | "enforced",
+                        "required": ["openai", ...]}``. The environment can raise
+                        the mode (SHIELD360_PROTECT_MODE), never lower it, and add
+                        required providers (SHIELD360_PROTECT_REQUIRED). In
+                        enforced mode a guard failure refuses the call, a
+                        streamed completion postflight guards cannot inspect is
+                        refused, and init() raises ProtectReadinessError instead
+                        of starting with a required provider unguarded.
+        service_version (str): Release version, set as the ``service.version``
+                               resource attribute. Falls back to
+                               SHIELD360_SERVICE_VERSION, then OTEL_SERVICE_VERSION.
+        capture_code_location (bool): Record the application call site
+                               (code.function.name, code.file.path,
+                               code.line.number) on GenAI spans. On by default;
+                               overrides SHIELD360_CAPTURE_CODE_LOCATION.
+        code_root (str): Directory that code.file.path is made relative to.
+                         Falls back to SHIELD360_CODE_ROOT, then the git root.
     """
     disabled_instrumentors = normalize_instrumentor_names(disabled_instrumentors)
     logger.info("Starting shield360 initialization...")
@@ -299,7 +333,7 @@ def init(
         # Skip otlp_endpoint and otlp_headers - let existing code handle them
         if disable_batch is False and "disable_batch" in env_config:
             disable_batch = env_config["disable_batch"]
-        if capture_message_content is True and "capture_message_content" in env_config:
+        if capture_message_content is None and "capture_message_content" in env_config:
             capture_message_content = env_config["capture_message_content"]
         if not disabled_instrumentors and "disabled_instrumentors" in env_config:
             disabled_instrumentors = normalize_instrumentor_names(
@@ -337,6 +371,12 @@ def init(
     if shield360_url is None:
         shield360_url = os.getenv("SHIELD360_URL")
 
+    # With no OTLP endpoint, a Shield360 URL and API key are the destination:
+    # the platform's authenticated ingest route, with the key as bearer.
+    otlp_endpoint, otlp_headers = resolve_destination(
+        otlp_endpoint, otlp_headers, shield360_url, shield360_api_key
+    )
+
     disabled_instrumentors = apply_controller_mode_defaults(
         controller_mode,
         disabled_instrumentors,
@@ -371,6 +411,9 @@ def init(
         # Retrieve or create the single configuration instance.
         config = Shield360Config()
 
+        # Build and VCS attributes (service.version, vcs.*), resolved once.
+        resource_attributes = resolve_build_attributes(service_version)
+
         # Setup tracing based on the provided or default configuration.
         tracer = setup_tracing(
             application_name=final_service_name,
@@ -379,6 +422,9 @@ def init(
             otlp_endpoint=otlp_endpoint,
             otlp_headers=otlp_headers,
             disable_batch=disable_batch,
+            resource_attributes=resource_attributes,
+            capture_code_location=capture_code_location,
+            code_root=code_root,
         )
 
         if not tracer:
@@ -392,6 +438,7 @@ def init(
             otlp_endpoint=None,
             otlp_headers=None,
             disable_batch=disable_batch,
+            resource_attributes=resource_attributes,
         )
 
         if not event_provider:
@@ -407,6 +454,7 @@ def init(
                 meter=None,
                 otlp_endpoint=otlp_endpoint,
                 otlp_headers=otlp_headers,
+                resource_attributes=resource_attributes,
             )
 
         if err:
@@ -417,11 +465,18 @@ def init(
             metrics_dict = None
             disable_metrics = True
 
-        if (
-            os.getenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "").lower()
-            == "false"
-        ):
+        # Prompt and completion text is captured only when asked for: the
+        # argument, the config file / SHIELD360_* environment, or the
+        # OpenTelemetry GenAI variable. The default is off (data minimisation:
+        # a Shield360 organisation stores no content unless it opts in).
+        otel_capture = os.getenv(
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", ""
+        ).lower()
+        if otel_capture == "false":
             capture_message_content = False
+        elif capture_message_content is None:
+            capture_message_content = otel_capture == "true"
+        capture_message_content = bool(capture_message_content)
 
         # Update global configuration with the provided settings.
         config.update_config(
@@ -450,12 +505,17 @@ def init(
         for name, instrumentor in instrumentor_instances.items():
             instrument_if_available(name, instrumentor, config, disabled_instrumentors)
 
+        # Shield Protect: the mode and the required providers, merged with the environment.
+        from shield360.protect._mode import resolve_protect, set_protect_state
+
+        resolved_protect = resolve_protect(protect)
+
         # Set up auto-guards if configured (second wrapt pass over provider methods)
         if guards:
             try:
                 from shield360.guard._integration import setup_auto_guards
 
-                setup_auto_guards(guards, fail_open=guard_fail_open)
+                setup_auto_guards(guards, fail_open=guard_fail_open, protect=resolved_protect)
 
                 # With a Shield360 URL and API key, what the guards stop is
                 # also recorded in Shield360's Data protection report.
@@ -468,8 +528,18 @@ def init(
                     environment=environment,
                     sdk_version=_installed_version(),
                 )
+            except ProtectReadinessError:
+                # Shield Protect: a readiness failure in enforced mode stops startup; it is never logged and swallowed.
+                raise
             except Exception as e:
                 logger.error("Failed to set up auto-guards: %s", e)
+        elif resolved_protect.mode == "enforced" and resolved_protect.required:
+            set_protect_state(resolved_protect.mode, [], resolved_protect.required)
+            raise ProtectReadinessError(
+                resolved_protect.required, "Shield360 Protect: enforced mode requires guards; pass guards to init()."
+            )
+        else:
+            set_protect_state(resolved_protect.mode, [], [])
 
         # Handle GPU instrumentation separately (only if GPU is found)
         if not disable_metrics and collect_gpu_stats:
