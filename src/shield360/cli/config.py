@@ -129,6 +129,19 @@ PARAMETER_CONFIG = {
         "cli_type": str,
         "parser": "json",
     },
+    # SHIELD: application logs (opt-in; data minimisation).
+    "capture_logs": {
+        "default": False,
+        "env_var": "SHIELD360_CAPTURE_LOGS",
+        "cli_help": "Send application logging records to Shield360",
+        "cli_type": bool,
+    },
+    "log_level": {
+        "default": None,
+        "env_var": "SHIELD360_LOG_LEVEL",
+        "cli_help": "Lowest application log level sent (default INFO)",
+        "cli_type": str,
+    },
 }
 
 

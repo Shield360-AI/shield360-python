@@ -80,6 +80,20 @@ MODULE_NAME_MAP = {
     "requests": "requests",
     "urllib": "urllib",
     "urllib3": "urllib3",
+    # SHIELD: data stores, messaging and cloud (official OpenTelemetry instrumentations)
+    "sqlalchemy": "sqlalchemy",
+    "asyncpg": "asyncpg",
+    "psycopg2": "psycopg2",
+    "pymysql": "pymysql",
+    "mysqlclient": "MySQLdb",
+    "pymongo": "pymongo",
+    "redis": "redis",
+    "celery": "celery",
+    "grpc-client": "grpc",
+    "grpc-server": "grpc",
+    "botocore": "botocore",
+    "kafka-python": "kafka",
+    "confluent-kafka": "confluent_kafka",
 }
 
 # Common aliases so users can pass intuitive names (e.g. "aiohttp") that
@@ -108,6 +122,13 @@ INSTRUMENTOR_ALIASES = {
     "digitalocean": "pydo",
     "digital_ocean": "pydo",
     "do_gradient": "gradient",
+    "grpc_client": "grpc-client",
+    "grpc_server": "grpc-server",
+    "kafka_python": "kafka-python",
+    "kafka": "kafka-python",
+    "grpc": "grpc-client",
+    "confluent_kafka": "confluent-kafka",
+    "mysqldb": "mysqlclient",
 }
 
 
@@ -211,6 +232,21 @@ INSTRUMENTOR_MAP = {
     "requests": "opentelemetry.instrumentation.requests.RequestsInstrumentor",
     "urllib": "opentelemetry.instrumentation.urllib.URLLibInstrumentor",
     "urllib3": "opentelemetry.instrumentation.urllib3.URLLib3Instrumentor",
+    # SHIELD: data stores, messaging and cloud. Values stay out: Redis commands are
+    # recorded as "GET ?", MongoDB statements are off, SQL has no parameters.
+    "sqlalchemy": "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor",
+    "asyncpg": "opentelemetry.instrumentation.asyncpg.AsyncPGInstrumentor",
+    "psycopg2": "opentelemetry.instrumentation.psycopg2.Psycopg2Instrumentor",
+    "pymysql": "opentelemetry.instrumentation.pymysql.PyMySQLInstrumentor",
+    "mysqlclient": "opentelemetry.instrumentation.mysqlclient.MySQLClientInstrumentor",
+    "pymongo": "opentelemetry.instrumentation.pymongo.PymongoInstrumentor",
+    "redis": "opentelemetry.instrumentation.redis.RedisInstrumentor",
+    "celery": "opentelemetry.instrumentation.celery.CeleryInstrumentor",
+    "grpc-client": "opentelemetry.instrumentation.grpc.GrpcInstrumentorClient",
+    "grpc-server": "opentelemetry.instrumentation.grpc.GrpcInstrumentorServer",
+    "botocore": "opentelemetry.instrumentation.botocore.BotocoreInstrumentor",
+    "kafka-python": "opentelemetry.instrumentation.kafka.KafkaInstrumentor",
+    "confluent-kafka": "opentelemetry.instrumentation.confluent_kafka.ConfluentKafkaInstrumentor",
 }
 
 

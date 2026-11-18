@@ -135,46 +135,39 @@ def setup_python_path() -> None:
     os.environ["PYTHONPATH"] = os.pathsep.join(python_path)
 
 
+def _exec(target_command) -> None:
+    """Replaces this process with the app (the way opentelemetry-instrument does)."""
+    executable = which(target_command[0])
+    if executable:
+        os.execl(executable, executable, *target_command[1:])
+    try:
+        os.execvpe(target_command[0], target_command, os.environ)
+    except (FileNotFoundError, OSError) as e:
+        logger.error("Failed to execute command %s: %s", target_command[0], e)
+        sys.exit(127)
+
+
 def run() -> None:
     """Main entry point for shield360-instrument CLI."""
     try:
         # Parse CLI arguments and target command
         args, target_command = parse_arguments()
+    except KeyboardInterrupt:
+        sys.exit(130)
 
+    # SHIELD: fail open. If setting up the bootstrap fails, the app still runs, without Shield360.
+    try:
         # Set environment variables from CLI arguments (env vars take precedence)
         set_environment_from_cli_args(args)
 
         # Setup Python path for auto-initialization
         setup_python_path()
-
-        # Execute target application using OpenTelemetry's approach
-        executable = which(target_command[0])
-        if not executable:
-            logger.warning(
-                "Command not found: %s. Attempting direct execution as fallback.",
-                target_command[0],
-            )
-            # Fallback: try to execute directly (user's PATH might have it)
-            try:
-                os.execvpe(target_command[0], target_command, os.environ)
-            except (FileNotFoundError, OSError) as e:
-                logger.error("Failed to execute command %s: %s", target_command[0], e)
-                logger.error(
-                    "Shield360 instrumentation failed, but this should not break your application"
-                )
-                return
-        else:
-            os.execl(executable, executable, *target_command[1:])
-
     except KeyboardInterrupt:
-        # Only acceptable exit - user explicitly interrupted
         sys.exit(130)
-    except Exception as e:
-        logger.error("Shield360 CLI failed: %s", e)
-        logger.error(
-            "This should not prevent your application from running. Consider running without shield360-instrument."
-        )
-        # Don't exit - let the process continue
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Shield360: zero-code start-up failed (%s); the app runs without Shield360.", e)
+
+    _exec(target_command)
 
 
 if __name__ == "__main__":

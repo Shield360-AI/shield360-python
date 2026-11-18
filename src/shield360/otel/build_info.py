@@ -181,13 +181,17 @@ def resolve_build_attributes(service_version=None):
     """
     Resolve the four build attributes; keys with no valid value are omitted.
 
-    Precedence per attribute: init option / SHIELD360_* env, then
+    Precedence per attribute: init option / SHIELD360_* env (for
+    service.version: SHIELD360_SERVICE_VERSION, then its alias
+    SHIELD360_RELEASE), then
     OTEL_SERVICE_VERSION and OTEL_RESOURCE_ATTRIBUTES (an operator's explicit
     OTel setting), then CI provider env (never service.version). CI values come
     from a single provider and are never mixed across providers.
     """
     explicit = {
-        SERVICE_VERSION: str(service_version or "") or _env("SHIELD360_SERVICE_VERSION"),
+        SERVICE_VERSION: str(service_version or "")
+        or _env("SHIELD360_SERVICE_VERSION")
+        or _env("SHIELD360_RELEASE"),
         VCS_REVISION: _env("SHIELD360_GIT_COMMIT"),
         VCS_REPOSITORY_URL: _env("SHIELD360_GIT_REPOSITORY_URL"),
         VCS_REF_NAME: _env("SHIELD360_GIT_BRANCH"),

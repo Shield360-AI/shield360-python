@@ -1,0 +1,147 @@
+---
+title: 'Web SDK Overview'
+sidebarTitle: 'Web SDK (browser)'
+icon: 'browser'
+description: 'Real-user monitoring for web apps: page loads, route changes, Core Web Vitals, JavaScript errors and fetch/XHR timing, linked to your backend traces. Private by default.'
+---
+
+The Shield360 Web SDK (`@shield360/web`) measures how your web app performs for the people using it. It runs in their browsers and sends OpenTelemetry (OTLP/JSON) to Shield360 with a public **browser key**. What it records shows under **Telemetry → Browser**.
+
+<Warning>
+`@shield360/web` is not on npm yet. Until it is, build it from `sdk/web` in the Shield360 repository (`npm ci && npm run build`) and serve `dist/shield360-web.iife.js` yourself.
+</Warning>
+
+## What it records
+
+| Signal | Sent as | What it holds |
+|---|---|---|
+| Page load | Span `browser.page_load` | Navigation start to the end of the load event, with time to first byte, DOM interactive, DOM content loaded, load time, transfer size and the navigation type |
+| Route change | Span `browser.route_change` | A single-page app's `history.pushState` / `replaceState`, back and forward, and `#/` hash routes, until the new route has painted |
+| Request | Span `HTTP <METHOD>` (client) | Each `fetch` and `XMLHttpRequest`: method, cleaned URL, status and duration. A failed request or a status of 400 or more is an error |
+| Web Vitals | Log event `browser.web_vital` | LCP, INP, CLS, FCP and TTFB once per page load, with web.dev's rating (good, needs improvement, poor) |
+| JavaScript error | Log event `browser.error` | Uncaught errors and unhandled promise rejections (and errors you report), with type, message and stack trace |
+
+Every record carries a random session id and the page view it belongs to. The resource is marked `shield360.source=browser`, so browser telemetry sits in the same traces and logs tables as your server telemetry and is told apart by that mark.
+
+## Private by default
+
+The SDK is built so that a page cannot leak what its visitors type or see:
+
+- **No cookies and no fingerprinting.** The session id is random and lives in `sessionStorage` (one tab) or only in memory. The browser is described by coarse families only (Chrome, Safari…; Windows, iOS…; phone or not), never the full user agent, screen or fonts.
+- **No form values, request or response bodies, or headers.** The SDK never reads the DOM or a body.
+- **No query strings.** Every URL loses its query string, fragment and credentials before it leaves the browser, unless you allow a parameter by name. Path segments that look like ids (numbers, UUIDs, long hex or token-like strings, email addresses) become `:id`, so `/orders/12345` is recorded as `/orders/:id`.
+- **Error text is cleaned the same way.** URLs inside messages and stacks are cleaned; Shield360 also masks email addresses and long numbers when it stores them.
+- **No session replay.** Recording sessions is not part of this SDK. When it comes, it will be an opt-in under **Settings → Data retention**.
+
+Shield360 enforces the same rules again when the data arrives (see [Browser monitoring](https://shield360.ai)), and your organization's [data retention](https://shield360.ai) settings apply as they do to all telemetry.
+
+## Install
+
+<Steps>
+  <Step title="Create a browser key">
+    In Shield360, open **Settings → Browser keys** and choose **New browser key**. List the origins your site is served from, such as `https://shop.example.com` or `https://*.example.com`. Add `http://localhost:3000` for local development.
+
+    A browser key is public: it sits in your page. Never use a secret API key (`shield360-…`) in a web page; the ingest refuses it.
+  </Step>
+  <Step title="Add the SDK">
+    <Tabs>
+      <Tab title="npm">
+        ```bash
+        npm install @shield360/web
+        ```
+
+        ```typescript
+        import { init } from "@shield360/web";
+
+        init({
+          key: "s360_web_…",
+          endpoint: "https://app.shield360.ai",
+          service: "shop-web",
+          environment: "production",
+          version: "1.4.0",
+          traceOrigins: ["https://api.example.com"],
+        });
+        ```
+
+        Call `init` as early as possible, before the rest of your app starts, so the first errors and requests are recorded.
+      </Tab>
+      <Tab title="Script tag">
+        ```html
+        <script
+          src="https://cdn.jsdelivr.net/npm/@shield360/web@0/dist/shield360-web.iife.js"
+          data-key="s360_web_…"
+          data-endpoint="https://app.shield360.ai"
+          data-service="shop-web"
+          data-environment="production"
+          data-trace-origins="https://api.example.com"
+          async></script>
+        ```
+
+        Put it in the `<head>` of every page. `window.Shield360Web` offers the same functions as the npm package.
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Check it works">
+    Open your site, click around, then open **Telemetry → Browser** in Shield360. Page views show within a few seconds; Web Vitals arrive when the tab is hidden or closed.
+  </Step>
+</Steps>
+
+## Options
+
+| Option | Script attribute | Default | Meaning |
+|---|---|---|---|
+| `key` | `data-key` | Required | The public browser key |
+| `endpoint` | `data-endpoint` | Required | Your Shield360 address |
+| `service` | `data-service` | Required | The app's name, shown in Shield360 |
+| `version` | `data-version` | | Your release or commit |
+| `environment` | `data-environment` | | Such as `production` |
+| `traceOrigins` | `data-trace-origins` (comma-separated) | `[]` | Other origins whose requests carry `traceparent`. Exact origins or regular expressions |
+| `traceSameOrigin` | | `true` | Send `traceparent` on requests to the page's own origin |
+| `allowQueryParams` | `data-allow-query-params` (comma-separated) | `[]` | Query parameters whose values are kept |
+| `maskPathPatterns` | | `[]` | More regular expressions for path segments to mask |
+| `ignoreUrls` | | `[]` | Requests not to record |
+| `sampleRate` | `data-sample-rate` | `1` | Share of sessions recorded, 0 to 1 |
+| `sessionStorage` | `data-session="memory"` | `"sessionStorage"` | Where the session id lives |
+| `trackRouteChanges`, `trackRequests`, `trackErrors`, `trackWebVitals` | | `true` | Turn a part off |
+| `debug` | `data-debug="true"` | `false` | Log what the SDK does to the console |
+
+The ingest keeps only the query parameters the browser key allows too, so a parameter must be allowed in both places to be stored.
+
+Other functions:
+
+- `reportError(error)` records an error your code caught.
+- `flush()` sends what is queued now.
+- `shutdown()` stops recording (for tests and hot reloads).
+
+## Link browser requests to backend traces
+
+The SDK adds a W3C `traceparent` header to requests to your page's own origin and to the origins in `traceOrigins`. No other site ever receives one. A backend instrumented with a Shield360 SDK or any OpenTelemetry SDK continues that trace, so the browser's request and the backend's spans show as one trace.
+
+For another origin, its CORS settings must allow the header:
+
+```bash
+Access-Control-Allow-Headers: traceparent, content-type
+```
+
+To link the page load itself to the server request that rendered the page, have your server write its trace context into the page:
+
+```html
+<meta name="traceparent" content="00-<trace id>-<span id>-01">
+```
+
+or send it as a `Server-Timing: traceparent;desc="00-…-01"` header. The page load then joins that trace.
+
+## How data is sent
+
+The SDK batches records and sends them to `<endpoint>/api/browser-ingest/v1/traces` and `/v1/logs` every few seconds, or at once when 50 are waiting. When the page is hidden or closed it sends what is left with `navigator.sendBeacon`. Requests carry the browser key in the query string and the body as `text/plain`, so the browser sends them without a CORS preflight and without cookies. A page that produces errors in a loop is capped at 50 errors per page view and 600 records a minute.
+
+If your site sets a Content-Security-Policy, add your Shield360 address to `connect-src` (and the script's host to `script-src` when you use the script tag).
+
+## Bundle size
+
+The script-tag build is about 7 KB gzipped, with no dependencies.
+
+## Next steps
+
+- [Browser monitoring in the console](https://shield360.ai)
+- [Data retention](https://shield360.ai)

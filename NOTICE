@@ -1,0 +1,44 @@
+Shield360 Python SDK
+Copyright 2026 ThinkFleet
+
+Licensed under the Apache License, Version 2.0 (see LICENSE, or
+http://www.apache.org/licenses/LICENSE-2.0).
+
+---
+
+This product includes software developed by OpenLIT
+(https://github.com/openlit/openlit), Copyright the OpenLIT authors, licensed
+under the Apache License, Version 2.0. Portions of this software (the instrumentation, OTel setup and evaluation modules) are
+derived from OpenLIT, forked at commit
+cc00e010c0392f0059b4892ab43e9d72f046c135 (2026-09-17), and modified by
+ThinkFleet. Modified files that came from OpenLIT keep their upstream paths;
+changes are marked with SHIELD: comments.
+
+---
+
+The runtime application self-protection (RASP) detection rules in src/shield360/rasp adapt
+algorithms from Baidu OpenRASP (https://github.com/baidu/openrasp,
+plugins/official/plugin.js), Copyright Baidu, Inc., licensed under the Apache
+License, Version 2.0.
+
+---
+
+The AI security pack (src/shield360/ai_security) adapts work from Cisco AI Defense
+(https://github.com/cisco-ai-defense), Copyright Cisco Systems, Inc. and its
+affiliates, licensed under the Apache License, Version 2.0:
+
+  - mcp-scanner (commit 21a87b4bc818c2e279d9af6cf5b20ed386dfc9b5): the
+    tool-description rules are adapted from its YARA rules
+    (mcpscanner/data/yara_rules), and the tool-poisoning test corpus reuses
+    test vectors from tests/test_yara_rules_coverage.py.
+  - adversarial-hubness-detector (commit
+    7fbfc5479e77e21ec9df094c416e09f0ee76eae9): the RAG hub-chunk check
+    follows its median/MAD hub-rate scoring and cross-cluster spread idea,
+    reimplemented for streaming retrieval telemetry.
+  - project-quarry (commit eadc6e369038dee43886c4470e1b218da4d9cdf1): the
+    multi-turn jailbreak heuristic follows its idea of rules over message
+    order with counts.
+
+Changes: patterns re-expressed for this language's regular expressions,
+weighted and scored with Shield360's injection scoring; no Cisco code is
+included verbatim.

@@ -21,7 +21,16 @@ from shield360.semcov import SemanticConvention
 from shield360.otel.tracing import setup_tracing
 from shield360.otel.metrics import setup_meter
 from shield360.otel.events import setup_events
-from shield360.otel.build_info import resolve_build_attributes
+from shield360.otel.build_info import SERVICE_VERSION, resolve_build_attributes
+from shield360._feedback import (  # noqa: F401 — public re-exports
+    configure_feedback,
+    feedback,
+    get_current_span_id,
+    get_current_trace_id,
+)
+# SHIELD: application logs, opt-in.
+from shield360.otel import app_logs as _app_logs
+from shield360.otel.app_logs import capture_logs, stop_capturing_logs  # noqa: F401 — public API
 from shield360.__helpers import (
     fetch_pricing_info,
     get_env_variable,
@@ -36,6 +45,7 @@ from shield360.__helpers import (
 )
 from shield360._config import Shield360Config  # noqa: F401 — re-exported for public API
 from shield360._destination import resolve_destination
+from shield360._noise import apply_default_excluded_urls
 from shield360._instrumentors import (
     MODULE_NAME_MAP,
     get_all_instrumentors,
@@ -47,6 +57,19 @@ from shield360.instrumentation.gpu import GPUInstrumentor
 
 # Import guards and evals
 import shield360.guard
+# Budget check: shield360.budgets.check() and the automatic pre-call check.
+import shield360.budgets
+from shield360.budgets import BudgetExceededError  # noqa: F401 — public re-export
+import shield360.flags  # noqa: F401 — feature flags: shield360.flags.get_flag / is_enabled
+# Cost per end customer: set_customer(), with customer(...), get_customer().
+# The SDK never hashes: Shield360 stores user ids only as a keyed hash, and
+# tenant ids as given unless the organisation opts to hash them.
+from shield360._customer import (  # noqa: F401 — public re-exports
+    CustomerSpanProcessor,
+    customer,
+    get_customer,
+    set_customer,
+)
 import shield360.evals
 
 # Re-export guard classes at top level for clean API:
@@ -79,6 +102,8 @@ from shield360.guard import (  # noqa: F401 — public re-exports
     GuardTimeoutError,
     GuardConfigError,
 )
+# SHIELD: runtime protection (RASP), opt-in: init(rasp=...), the runtime switch and the block error.
+from shield360.rasp import RaspBlockedError, disable_rasp, enable_rasp  # noqa: F401 — public re-exports
 
 # Set up logging for error and information messages.
 logger = logging.getLogger(__name__)
@@ -131,6 +156,19 @@ def is_opentelemetry_instrumentor(instrumentor_name):
         "requests",
         "urllib",
         "urllib3",
+        "sqlalchemy",
+        "asyncpg",
+        "psycopg2",
+        "pymysql",
+        "mysqlclient",
+        "pymongo",
+        "redis",
+        "celery",
+        "grpc-client",
+        "grpc-server",
+        "botocore",
+        "kafka-python",
+        "confluent-kafka",
     }
     return instrumentor_name in opentelemetry_instrumentors
 
@@ -203,7 +241,7 @@ def _installed_version() -> str:
         return ""
 
 
-def init(
+def init(  # pylint: disable=too-many-arguments  # SHIELD: capture_logs, log_level
     environment="default",
     application_name="default",
     service_name="default",
@@ -227,10 +265,17 @@ def init(
     *,
     guards=None,
     guard_fail_open=True,
+    guard_heartbeat=None,
     protect=None,
     service_version=None,
     capture_code_location=None,
     code_root=None,
+    budget_check=None,
+    capture_logs=None,  # pylint: disable=redefined-outer-name
+    log_level=None,
+    ai_security=None,
+    rasp=None,  # SHIELD: runtime protection
+    runtime_packages=None,  # SHIELD: runtime SCA
 ):
     """
     Initializes the shield360 configuration and setups tracing.
@@ -278,6 +323,10 @@ def init(
                        that automatically run on every LLM call.  Optional.
         guard_fail_open (bool): If True (default), guard errors resolve to allow.
                                 Set to False for strict environments.
+        guard_heartbeat (bool): With guards and a Shield360 URL and key, the SDK
+                                tells Shield360 every few minutes which guards run
+                                and in which mode (no content). False turns it off,
+                                as does SHIELD360_GUARD_HEARTBEAT=false.
         protect (dict): Shield Protect: ``{"mode": "observe" | "warn" | "enforced",
                         "required": ["openai", ...]}``. The environment can raise
                         the mode (SHIELD360_PROTECT_MODE), never lower it, and add
@@ -295,7 +344,50 @@ def init(
                                overrides SHIELD360_CAPTURE_CODE_LOCATION.
         code_root (str): Directory that code.file.path is made relative to.
                          Falls back to SHIELD360_CODE_ROOT, then the git root.
+        budget_check (bool | dict): Check this app's Shield360 budgets before each
+                         provider call (``True``, or ``{"fail_closed": True}``);
+                         a call a budget blocks raises BudgetExceededError.
+                         Cached per the decision's ttl and headroom; fails open
+                         unless fail_closed. Falls back to SHIELD360_BUDGET_CHECK.
+                         ``shield360.budgets.check()`` works either way.
+        capture_logs (bool): Send the application's ``logging`` records to
+                             Shield360 (a handler on the root logger, at
+                             ``log_level`` and above). Off by default; falls
+                             back to SHIELD360_CAPTURE_LOGS.
+        log_level (int | str): Lowest level sent when capture_logs is on.
+                               INFO by default; falls back to SHIELD360_LOG_LEVEL.
+        ai_security (bool | dict): The AI security pack (OWASP Top 10 for LLM
+                         apps), monitoring by default: ``True`` uses the
+                         platform's policy; a dict may add ``policy`` (from
+                         code), ``config_public_key`` (required for the platform
+                         policy; or SHIELD360_CONFIG_PUBLIC_KEY),
+                         ``allow_unpinned_config`` (development only),
+                         ``config_cache_file``,
+                         ``auto_instrument`` (default True) and
+                         ``record_allowed``. Falls back to SHIELD360_AI_SECURITY.
+                         See ``shield360.ai_security``.
+        rasp (bool | dict): Runtime application self-protection, off unless
+                         set: ``True``, or a dict of ``mode``, ``attacks``,
+                         ``allow``, ``model_output``, ``remote``,
+                         ``config_public_key`` (required for the signed config;
+                         or SHIELD360_CONFIG_PUBLIC_KEY), ``allow_unpinned_config``
+                         (development only), ``cache_dir`` and ``components``.
+                         SHIELD360_RASP=monitor|block turns it on, =off always
+                         wins. See ``shield360.rasp``.
+        runtime_packages (bool): Report the names and versions of the
+                         packages this process imports (never paths) so
+                         Shield360 can match them against vulnerability data.
+                         On by default with a Shield360 URL and API key;
+                         ``False`` or SHIELD360_RUNTIME_PACKAGES=off turns it
+                         off. See ``shield360.runtime_packages``.
     """
+    # SHIELD: shield360-instrument already started Shield360 from the environment: a second init() is a no-op.
+    from shield360 import _zero_code  # pylint: disable=import-outside-toplevel
+
+    if _zero_code.started():
+        _zero_code.note_skipped_init()
+        return
+
     disabled_instrumentors = normalize_instrumentor_names(disabled_instrumentors)
     logger.info("Starting shield360 initialization...")
 
@@ -361,6 +453,10 @@ def init(
             shield360_api_key = env_config["shield360_api_key"]
         if shield360_url is None and "shield360_url" in env_config:
             shield360_url = env_config["shield360_url"]
+        if capture_logs is None and "capture_logs" in env_config:
+            capture_logs = env_config["capture_logs"]
+        if log_level is None and "log_level" in env_config:
+            log_level = env_config["log_level"]
 
     except ImportError:
         # Fallback if config module is not available - continue without env var support
@@ -413,6 +509,10 @@ def init(
 
         # Build and VCS attributes (service.version, vcs.*), resolved once.
         resource_attributes = resolve_build_attributes(service_version)
+        # User feedback names the application and release it was given for.
+        configure_feedback(
+            app=final_service_name, release=resource_attributes.get(SERVICE_VERSION)
+        )
 
         # Setup tracing based on the provided or default configuration.
         tracer = setup_tracing(
@@ -431,18 +531,25 @@ def init(
             logger.error("Shield360 tracing setup failed. Tracing will not be available.")
 
         # Setup events based on the provided or default configuration.
+        # SHIELD: the resolved destination is passed, not left to the
+        # environment tracing happened to set, so logs go where traces go.
         event_provider = setup_events(
             application_name=final_service_name,
             environment=environment,
             event_logger=None,
-            otlp_endpoint=None,
-            otlp_headers=None,
+            otlp_endpoint=otlp_endpoint,
+            otlp_headers=otlp_headers,
             disable_batch=disable_batch,
             resource_attributes=resource_attributes,
         )
 
         if not event_provider:
             logger.error("Shield360 events setup failed. Events will not be available")
+
+        # SHIELD: application logs, through the same LoggerProvider. Nothing
+        # is sent unless asked for (data minimisation).
+        if capture_logs:
+            _app_logs.capture_logs(level=log_level)
 
         # Setup meter and receive metrics_dict instead of meter.
         metrics_dict = None
@@ -498,6 +605,9 @@ def init(
             shield360_url=shield360_url,
         )
 
+        # SHIELD: health probes and the SDK's own calls to Shield360 are not traced.
+        apply_default_excluded_urls(shield360_url)
+
         # Create instrumentor instances dynamically
         instrumentor_instances = get_all_instrumentors()
 
@@ -527,6 +637,8 @@ def init(
                     application_name=final_service_name,
                     environment=environment,
                     sdk_version=_installed_version(),
+                    guards=list(guards),
+                    heartbeat=guard_heartbeat,
                 )
             except ProtectReadinessError:
                 # Shield Protect: a readiness failure in enforced mode stops startup; it is never logged and swallowed.
@@ -540,6 +652,72 @@ def init(
             )
         else:
             set_protect_state(resolved_protect.mode, [], [])
+
+        # Budget check: the process's client, and the automatic pre-call check when asked for.
+        try:
+            if budget_check is None:
+                budget_check = (os.getenv("SHIELD360_BUDGET_CHECK") or "").strip().lower() in ("1", "true", "yes")
+            budget_options = {"app": final_service_name}
+            if isinstance(budget_check, dict) and budget_check.get("fail_closed") is not None:
+                budget_options["fail_closed"] = bool(budget_check["fail_closed"])
+            budget_client = shield360.budgets.configure(**budget_options)
+            if budget_check:
+                shield360.budgets.setup_auto_budget_check(budget_client)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to set up the budget check: %s", e)
+
+        # AI security pack: on when asked for; monitors by default.
+        try:
+            if ai_security is None:
+                ai_security = (os.getenv("SHIELD360_AI_SECURITY") or "").strip().lower() in ("1", "true", "yes")
+            if ai_security:
+                import shield360.ai_security as _ai_security  # pylint: disable=import-outside-toplevel
+                options = ai_security if isinstance(ai_security, dict) else {}
+                _ai_security.configure(
+                    url=shield360_url,
+                    api_key=shield360_api_key,
+                    app=final_service_name,
+                    environment=config.environment,
+                    policy=options.get("policy"),
+                    config_public_key=options.get("config_public_key"),
+                    allow_unpinned_config=bool(options.get("allow_unpinned_config")),
+                    config_cache_file=options.get("config_cache_file"),
+                    record_allowed=bool(options.get("record_allowed")),
+                )
+                if options.get("auto_instrument", True):
+                    _ai_security.setup_ai_security()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to set up AI security: %s", e)
+
+        # SHIELD: runtime SCA — names and versions of the packages imported, on unless
+        # runtime_packages=False or SHIELD360_RUNTIME_PACKAGES=off. Started before RASP,
+        # which then leaves its own components report to it. Never raises.
+        try:
+            from shield360.runtime_packages import start_runtime_packages  # pylint: disable=import-outside-toplevel
+
+            start_runtime_packages(
+                shield360_url,
+                shield360_api_key,
+                final_service_name,
+                environment=environment,
+                sdk_version=_installed_version(),
+                option=runtime_packages,
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to start the runtime package report: %s", e)
+
+        # SHIELD: runtime protection (RASP): off unless asked for; never raises.
+        from shield360.rasp import init_rasp
+
+        init_rasp(
+            rasp,
+            application_name=final_service_name,
+            environment=environment,
+            url=shield360_url,
+            api_key=shield360_api_key,
+            sdk_version=_installed_version(),
+            otlp_endpoint=otlp_endpoint,
+        )
 
         # Handle GPU instrumentation separately (only if GPU is found)
         if not disable_metrics and collect_gpu_stats:

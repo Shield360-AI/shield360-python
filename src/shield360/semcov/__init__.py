@@ -710,6 +710,13 @@ class SemanticConvention:
     # Correlate CI / evidence packages with a Trace Governance Passport export.
     SHIELD360_GOVERNANCE_REPORT_ID = "shield360.governance.report_id"
 
+    # Cost per end customer: the SaaS builder's own customer (tenant) and,
+    # optionally, the end user inside it. Sent as given; Shield360 stores user ids
+    # only as a keyed hash, and tenant ids as given unless the organisation opts
+    # to hash them.
+    SHIELD360_CUSTOMER_TENANT_ID = "shield360.customer.tenant_id"
+    SHIELD360_CUSTOMER_USER_ID = "shield360.customer.user_id"
+
     GEN_AI_AGENT_TYPE = "gen_ai.agent.type"
     GEN_AI_AGENT_TASK_ID = "gen_ai.agent.task.id"
     GEN_AI_AGENT_ROLE = "gen_ai.agent.role"

@@ -41,6 +41,41 @@ _MAX_QUEUED = 5000
 _ATTEMPTS = 3
 
 
+def post_guard_events(
+    endpoint: str,
+    api_key: str,
+    body: Dict[str, Any],
+    label: str = "guard report",
+    retry_delay: float = 0.5,
+    urlopen: Optional[Any] = None,
+) -> bool:
+    """POST one ``{resource, events}`` batch to ``/api/guard/events``, retried a
+    few times. Shared with the runtime protection reporter. Never raises;
+    returns whether the batch was delivered."""
+    data = json.dumps(body).encode()
+    send = urlopen or urllib.request.urlopen
+    for attempt in range(_ATTEMPTS):
+        req = urllib.request.Request(
+            endpoint,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
+        try:
+            with send(req, timeout=10) as resp:
+                if 200 <= resp.status < 300:
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 401, 403, 413):
+                logger.warning("Shield360 rejected %ss: HTTP %s", label, e.code)
+                return False
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+        time.sleep(retry_delay * (attempt + 1))
+    logger.warning("Could not deliver %d %s(s) to Shield360", len(body.get("events") or []), label)
+    return False
+
+
 class _Reporter:
     def __init__(self, url: str, api_key: str, resource: Dict[str, Any], application_name: str):
         self.application_name = application_name
@@ -68,26 +103,7 @@ class _Reporter:
         return batch
 
     def _post(self, batch: List[Dict[str, Any]]) -> None:
-        body = json.dumps({"resource": self._resource, "events": batch}).encode()
-        for attempt in range(_ATTEMPTS):
-            req = urllib.request.Request(
-                self._endpoint,
-                data=body,
-                method="POST",
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {self._api_key}"},
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    if 200 <= resp.status < 300:
-                        return
-            except urllib.error.HTTPError as e:
-                if e.code in (400, 401, 403, 413):
-                    logger.warning("Shield360 rejected guard reports: HTTP %s", e.code)
-                    return
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-            time.sleep(0.5 * (attempt + 1))
-        logger.warning("Could not deliver %d guard report(s) to Shield360", len(batch))
+        post_guard_events(self._endpoint, self._api_key, {"resource": self._resource, "events": batch})
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -100,6 +116,29 @@ class _Reporter:
             if not batch:
                 return
             self._post(batch)
+
+    def start_heartbeat(self, guards: List[Any], sdk_version: str) -> None:
+        """Send a heartbeat now and then about every five minutes (``_heartbeat.py``). Never raises."""
+        from shield360.guard import _heartbeat
+
+        guards = list(guards)
+
+        def beat() -> None:
+            while True:
+                try:
+                    self.add(
+                        {
+                            "name": _heartbeat.HEARTBEAT_EVENT_NAME,
+                            "time": datetime.now(timezone.utc).isoformat(),
+                            "attrs": _heartbeat.heartbeat_attrs(guards, self.application_name, sdk_version),
+                        }
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+                if self._stop.wait(_heartbeat.next_delay()):
+                    return
+
+        threading.Thread(target=beat, name="shield360-guard-heartbeat", daemon=True).start()
 
     def close(self) -> None:
         self._stop.set()
@@ -116,6 +155,8 @@ def configure(
     application_name: str,
     environment: str,
     sdk_version: str = "",
+    guards: Optional[List[Any]] = None,
+    heartbeat: Optional[bool] = None,
 ) -> bool:
     """Start reporting when both a URL and a key are given. Returns whether it did."""
     global _reporter  # pylint: disable=global-statement
@@ -130,6 +171,8 @@ def configure(
         "user.name": user,
         "deployment.environment": environment,
         "service.version": sdk_version,
+        # The app, by the service name its telemetry uses (security per app).
+        "service.name": application_name,
     }
     with _lock:
         if _reporter is not None:
@@ -141,6 +184,14 @@ def configure(
     if not _fetch_key(url, api_key, timeout=2):
         threading.Thread(target=_retry_key, args=(url, api_key), name="shield360-guard-key", daemon=True).start()
     atexit.register(_reporter.close)
+    # Guard heartbeat: which guards run, in which mode (no content).
+    from shield360.guard import _heartbeat
+
+    if guards and _heartbeat.heartbeat_enabled(heartbeat):
+        try:
+            _reporter.start_heartbeat(guards, sdk_version)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.debug("Could not start the guard heartbeat")
     return True
 
 
@@ -165,6 +216,7 @@ def report(
             "attrs": {
                 "shield360.guard.event_id": uuid.uuid4().hex,
                 "shield360.guard.client": reporter.application_name,
+                "shield360.guard.app": reporter.application_name,
                 "shield360.guard.action": action,
                 "shield360.guard.target": phase,
                 "shield360.guard.kinds": kinds,

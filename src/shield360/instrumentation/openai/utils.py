@@ -36,6 +36,8 @@ from shield360.__helpers import (
 )
 from shield360.semcov import SemanticConvention
 from shield360._config import Shield360Config
+# SHIELD: runtime protection (RASP), see record_model_response below.
+from shield360.rasp import record_model_response
 
 logger = logging.getLogger(__name__)
 
@@ -1253,6 +1255,8 @@ def process_response_response(
 
     scope = type("GenericScope", (), {})()
     response_dict = response_as_dict(response)
+    # SHIELD: runtime protection: the model's answer is untrusted input (a no-op unless RASP is on).
+    record_model_response(response_dict)
 
     scope._start_time = start_time
     scope._end_time = time.time()
@@ -1783,6 +1787,8 @@ def process_chat_response(
 
     scope = type("GenericScope", (), {})()
     response_dict = response_as_dict(response)
+    # SHIELD: runtime protection: the model's answer is untrusted input (a no-op unless RASP is on).
+    record_model_response(response_dict)
 
     scope._start_time = start_time
     scope._end_time = time.time()

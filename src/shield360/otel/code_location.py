@@ -15,6 +15,7 @@ import sys
 import sysconfig
 
 from opentelemetry.sdk.trace import SpanProcessor
+from opentelemetry.trace import SpanKind
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,28 @@ def _stdlib_dirs():
 
 
 _STDLIB_DIRS = _stdlib_dirs()
+
+
+# SHIELD: code cost — outbound calls (database, HTTP, RPC, messaging client
+# spans) carry their call site too, so a costly pattern `shield360 scan` finds
+# can be priced by what that call cost at runtime.
+_CALL_ATTRIBUTES = ("db.system", "db.system.name", "http.request.method", "http.method", "url.full", "rpc.system", "messaging.system")
+
+
+def call_capture_enabled(option=None):
+    """Init option wins; otherwise SHIELD360_CAPTURE_CALL_LOCATION; on by default."""
+    if option is not None:
+        return bool(option)
+    value = os.getenv("SHIELD360_CAPTURE_CALL_LOCATION", "").strip().lower()
+    return value not in _FALSE_VALUES
+
+
+def is_call_span(span):
+    """A database, HTTP, RPC or messaging client (or producer) span."""
+    if getattr(span, "kind", None) not in (SpanKind.CLIENT, SpanKind.PRODUCER):
+        return False
+    attributes = span.attributes or {}
+    return any(key in attributes for key in _CALL_ATTRIBUTES)
 
 
 def capture_enabled(option=None):
@@ -184,10 +207,11 @@ def is_genai_span(span):
 
 
 class CodeLocationSpanProcessor(SpanProcessor):
-    """Adds the application call site to GenAI spans when they start."""
+    """Adds the application call site to GenAI spans, and to outbound call spans, when they start."""
 
-    def __init__(self, code_root=None, cwd=None, home=None):
+    def __init__(self, code_root=None, cwd=None, home=None, calls=None):
         self._normaliser = _PathNormaliser(code_root=code_root, cwd=cwd, home=home)
+        self._calls = call_capture_enabled(calls)
         # co_filename -> repo-relative path, or None for non-application files.
         self._files = {}
 
@@ -226,7 +250,7 @@ class CodeLocationSpanProcessor(SpanProcessor):
 
     def on_start(self, span, parent_context=None):
         try:
-            if not is_genai_span(span):
+            if not is_genai_span(span) and not (self._calls and is_call_span(span)):
                 return
             existing = span.attributes or {}
             if any(key in existing for key in _CODE_KEYS):

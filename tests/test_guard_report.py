@@ -49,6 +49,8 @@ def test_reports_decisions_but_never_the_text():
         assert attrs["shield360.guard.kinds"] == "ssn"
         assert attrs["shield360.guard.target"] == "preflight"
         assert attrs["shield360.guard.client"] == "hr-assistant"
+        assert attrs["shield360.guard.app"] == "hr-assistant"
+        assert _Platform.received[0]["body"]["resource"]["service.name"] == "hr-assistant"
         assert _Platform.received[0]["auth"] == "Bearer key-1"
         assert _Platform.received[0]["path"] == "/api/guard/events"
         assert "123-45-6789" not in json.dumps(_Platform.received)

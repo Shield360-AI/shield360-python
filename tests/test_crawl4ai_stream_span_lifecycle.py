@@ -225,7 +225,7 @@ def test_cancelled_call_still_ends_its_span():
             asyncio.run(_invoke(tracer, call))
 
         spans = exporter.get_finished_spans()
-        assert len(spans) == 1, "cancelling the crawl leaked its span"
+        assert len(spans) == 1, "canceling the crawl leaked its span"
         assert spans[0].status.status_code is StatusCode.UNSET
         assert not dropped.records
 

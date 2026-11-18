@@ -7,9 +7,9 @@ schedule
 pylint
 
 # Gen AI
-langchain-core>=1.6.9
-langchain>=1.4.4,<2.0.0
-langgraph>=1.2.14,<2.0.0
+langchain-core>=1.7.1
+langchain>=1.4.7,<2.0.0
+langgraph>=1.2.18,<2.0.0
 cohere
 openai
 anthropic
@@ -25,7 +25,7 @@ together
 transformers
 groq
 elevenlabs
-crewai>=1.15.27
+crewai>=1.15.33
 agno
 
 # Vector DBs

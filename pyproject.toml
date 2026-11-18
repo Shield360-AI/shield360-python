@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "shield360"
-version = "1.1.0"
+version = "1.2.0"
 description = "OpenTelemetry-native Auto instrumentation library for monitoring LLM Applications and GPUs, facilitating the integration of observability into your GenAI-driven projects"
 authors = ["Shield360 <developer@shield360.ai>"]
 license = "Apache-2.0"
@@ -12,6 +12,8 @@ keywords = ["OpenTelemetry", "otel", "otlp","llm", "tracing", "openai", "anthrop
 packages = [
   { include = "shield360", from = "src" }
 ]
+# SHIELD: the OpenLIT / OpenRASP / Cisco attributions (Apache-2.0 section 4(d)).
+include = [{ path = "NOTICE", format = "sdist" }]
 
 [tool.poetry.dependencies]
 python = "^3.10.0"
@@ -42,10 +44,28 @@ opentelemetry-instrumentation-httpx = ">=0.52b0,<1.0.0"
 opentelemetry-instrumentation-requests = ">=0.52b0,<1.0.0"
 opentelemetry-instrumentation-urllib = ">=0.52b0,<1.0.0"
 opentelemetry-instrumentation-urllib3 = ">=0.52b0,<1.0.0"
+# SHIELD: data stores, messaging and cloud: an app's requests show what they wait on
+opentelemetry-instrumentation-sqlalchemy = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-asyncpg = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-psycopg2 = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-pymysql = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-mysqlclient = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-pymongo = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-redis = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-celery = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-grpc = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-botocore = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-kafka-python = ">=0.52b0,<1.0.0"
+opentelemetry-instrumentation-confluent-kafka = ">=0.52b0,<1.0.0"
 # Official OpenTelemetry System Metrics (optional)
 opentelemetry-instrumentation-system-metrics = {version = ">=0.52b0,<1.0.0", optional = true}
 openai = ">=1.92.0,<4.0.0"
 anthropic = ">=0.42.0,<2.0.0"
+# Agent passports (shield360.agents): Ed25519 verification
+cryptography = {version = ">=42.0.0", optional = true}
+
+[tool.poetry.extras]
+agents = ["cryptography"]
 
 [tool.poetry.scripts]
 shield360-instrument = "shield360.cli.main:run"

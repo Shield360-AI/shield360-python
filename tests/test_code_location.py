@@ -9,13 +9,14 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-from opentelemetry.trace import ProxyTracerProvider
+from opentelemetry.trace import ProxyTracerProvider, SpanKind
 
 from shield360.otel import code_location, tracing
 from shield360.otel.code_location import (
     CodeLocationSpanProcessor,
     _PathNormaliser,
     anonymise_absolute_path,
+    call_capture_enabled,
     capture_enabled,
 )
 
@@ -306,3 +307,53 @@ def test_real_openai_instrumentation_span(setup):
     assert attrs["gen_ai.operation.name"] == "chat"
     assert attrs["code.line.number"] == _line_of("# CALL-SITE-C")
     assert attrs["code.function.name"].endswith("test_real_openai_instrumentation_span")
+
+
+# SHIELD: code cost — outbound calls carry their call site, so a costly pattern
+# shield360 scan found can be priced by what that call cost.
+@pytest.mark.parametrize(
+    "kind, attributes",
+    [
+        (SpanKind.CLIENT, {"db.system": "postgresql"}),
+        (SpanKind.CLIENT, {"db.system.name": "mongodb"}),
+        (SpanKind.CLIENT, {"http.request.method": "GET"}),
+        (SpanKind.CLIENT, {"rpc.system": "aws-api"}),
+        (SpanKind.PRODUCER, {"messaging.system": "aws_sqs"}),
+    ],
+)
+def test_call_spans_get_call_site(setup, kind, attributes):
+    provider, exporter, _ = setup
+    provider.get_tracer("app").start_span("call", kind=kind, attributes=attributes).end()  # CALL-SITE-CALL
+    attrs = _only_span(exporter).attributes
+    assert attrs["code.line.number"] == _line_of("# CALL-SITE-CALL")
+    assert attrs["code.file.path"].endswith("tests/test_code_location.py")
+
+
+@pytest.mark.parametrize(
+    "kind, attributes",
+    [
+        (SpanKind.SERVER, {"http.request.method": "GET"}),
+        (SpanKind.INTERNAL, {"db.system": "postgresql"}),
+        (SpanKind.CLIENT, {"peer.service": "x"}),
+    ],
+)
+def test_other_spans_get_no_call_site(setup, kind, attributes):
+    provider, exporter, _ = setup
+    provider.get_tracer("app").start_span("call", kind=kind, attributes=attributes).end()
+    assert not any(key.startswith("code.") for key in _only_span(exporter).attributes)
+
+
+def test_calls_switched_off_leaves_genai_only(monkeypatch):
+    monkeypatch.setenv("SHIELD360_CAPTURE_CALL_LOCATION", "false")
+    assert call_capture_enabled() is False
+    assert call_capture_enabled(True) is True
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(CodeLocationSpanProcessor())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("app")
+    tracer.start_span("q", kind=SpanKind.CLIENT, attributes={"db.system": "postgresql"}).end()
+    tracer.start_span("chat", kind=SpanKind.CLIENT, attributes=GENAI).end()
+    db, chat = exporter.get_finished_spans()
+    assert "code.file.path" not in db.attributes
+    assert "code.file.path" in chat.attributes

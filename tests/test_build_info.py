@@ -23,6 +23,7 @@ def clean_env(monkeypatch):
     """Remove every variable the resolver reads so the host CI cannot leak in."""
     names = {
         "SHIELD360_SERVICE_VERSION",
+        "SHIELD360_RELEASE",
         "SHIELD360_GIT_COMMIT",
         "SHIELD360_GIT_REPOSITORY_URL",
         "SHIELD360_GIT_BRANCH",
@@ -119,6 +120,15 @@ def test_explicit_beats_ci_and_otel(monkeypatch):
         "vcs.ref.head.name": "explicit",
     }
     assert resolve_build_attributes("1.2.3")["service.version"] == "1.2.3"
+
+
+def test_shield360_release_alias(monkeypatch):
+    monkeypatch.setenv("SHIELD360_RELEASE", "2026.10.29")
+    monkeypatch.setenv("OTEL_SERVICE_VERSION", "otel")
+    assert resolve_build_attributes()["service.version"] == "2026.10.29"
+    monkeypatch.setenv("SHIELD360_SERVICE_VERSION", "explicit")
+    assert resolve_build_attributes()["service.version"] == "explicit"
+    assert resolve_build_attributes("option")["service.version"] == "option"
 
 
 def test_github_actions(monkeypatch):

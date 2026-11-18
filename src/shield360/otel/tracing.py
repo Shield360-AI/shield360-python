@@ -19,6 +19,8 @@ from opentelemetry.sdk.trace.export import (
 )
 from shield360.__helpers import parse_exporters
 from shield360.otel.code_location import CodeLocationSpanProcessor, capture_enabled
+# Cost per end customer: stamps the customer in effect on every span.
+from shield360._customer import CustomerSpanProcessor
 
 # pylint: disable=ungrouped-imports
 if os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "grpc":
@@ -83,6 +85,8 @@ def setup_tracing(
                 )
 
                 trace.set_tracer_provider(TracerProvider(resource=resource))
+                # Customer processor first, so every exporter sees its attributes.
+                trace.get_tracer_provider().add_span_processor(CustomerSpanProcessor())
 
                 if otlp_endpoint is not None:
                     os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = otlp_endpoint
@@ -148,6 +152,8 @@ def setup_tracing(
                     trace.get_tracer_provider().add_span_processor(span_processor)
 
             provider = trace.get_tracer_provider()
+            if isinstance(existing_provider, TracerProvider):
+                provider.add_span_processor(CustomerSpanProcessor())
             if capture_enabled(capture_code_location) and hasattr(
                 provider, "add_span_processor"
             ):
