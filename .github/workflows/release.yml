@@ -2,7 +2,7 @@ name: Release
 
 # Publishes `shield360` to PyPI.
 #
-# This file is generated. It lives in ThinkfleetAI/Shield360 as
+# This file is generated. It lives in Shield360-AI/Shield360 as
 # .github/mirror-workflows/python.yml and is written here by the mirror sync,
 # so edit it there.
 #

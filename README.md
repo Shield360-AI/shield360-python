@@ -2,7 +2,7 @@
 <h3>OpenTelemetry-native</h3>
 <h1>AI Observability, Evaluation and Guardrails Framework</h1>
 
-**[Shield360](https://shield360.ai) | [Quickstart](#-getting-started-with-llm-observability) | [Report a Bug](https://github.com/ThinkfleetAI/shield360-python/issues/new)**
+**[Shield360](https://shield360.ai) | [Quickstart](#-getting-started-with-llm-observability) | [Report a Bug](https://github.com/Shield360-AI/shield360-python/issues/new)**
 
 [![PyPI](https://img.shields.io/pypi/v/shield360)](https://pypi.org/project/shield360/)
 [![Downloads](https://static.pepy.tech/badge/shield360/month)](https://pepy.tech/project/shield360)
@@ -614,7 +614,7 @@ Both go through the same background queue, never raise and never delay a call. T
 
 ## 🌱 Contributing
 
-Whether it's big or small, we love contributions 💚. Check out our [Contribution guide](https://github.com/ThinkfleetAI/shield360-python#readme) to get started
+Whether it's big or small, we love contributions 💚. Check out our [Contribution guide](https://github.com/Shield360-AI/shield360-python#readme) to get started
 
 Unsure where to start? Here are a few ways to get involved:
 
@@ -626,5 +626,5 @@ Your input helps us grow and improve, and we're here to support you every step o
 
 Connect with the Shield360 community and maintainers for support, discussions, and updates:
 
-- 🌟 If you like it, Leave a star on our [GitHub](https://github.com/ThinkfleetAI/shield360-python)
-- 🐞 Report bugs on our [GitHub Issues](https://github.com/ThinkfleetAI/shield360-python/issues) to help us improve Shield360.
+- 🌟 If you like it, Leave a star on our [GitHub](https://github.com/Shield360-AI/shield360-python)
+- 🐞 Report bugs on our [GitHub Issues](https://github.com/Shield360-AI/shield360-python/issues) to help us improve Shield360.

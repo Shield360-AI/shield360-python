@@ -102,6 +102,10 @@ $env:SHIELD360_HOST_METRICS = '1'
 irm https://app.shield360.ai/api/cli/install-server.ps1 | iex
 ```
 
+<Warning>
+The collector your Shield360 server serves (`shield360-otelcol`, `shield360-otelcol.exe` on Windows) is not code-signed, and Windows builds of the CLI may not be signed yet either. Windows SmartScreen or your endpoint protection may warn on first run. The installer refuses any collector download whose sha256 does not match the one the server publishes, so allow the files after checking where they came from.
+</Warning>
+
 The installer does three things:
 
 1. It installs the `shield360` CLI.

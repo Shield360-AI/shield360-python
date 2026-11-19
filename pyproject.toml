@@ -4,9 +4,9 @@ version = "1.2.0"
 description = "OpenTelemetry-native Auto instrumentation library for monitoring LLM Applications and GPUs, facilitating the integration of observability into your GenAI-driven projects"
 authors = ["Shield360 <developer@shield360.ai>"]
 license = "Apache-2.0"
-repository = "https://github.com/ThinkfleetAI/shield360-python"
+repository = "https://github.com/Shield360-AI/shield360-python"
 readme = "README.md"
-homepage = "https://github.com/ThinkfleetAI/shield360-python"
+homepage = "https://github.com/Shield360-AI/shield360-python"
 keywords = ["OpenTelemetry", "otel", "otlp","llm", "tracing", "openai", "anthropic", "claude", "cohere", "llm monitoring", "observability", "monitoring", "gpt", "Generative AI", "chatGPT", "gpu"]
 
 packages = [
