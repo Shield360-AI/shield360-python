@@ -8,7 +8,7 @@ import contextvars
 import inspect
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from shield360.rasp._types import RaspInput
 
@@ -47,6 +47,10 @@ class RaspContext:
     # when a sink reads the inputs, until it reports the body was found
     # (returns other than False).
     late: Optional[Callable[[], Optional[bool]]] = None
+    # SHIELD: protection triangle — Edge's verified context, and response headers for Edge (the verdict).
+    edge: Optional[Dict[str, Any]] = None
+    response_headers: List[Tuple[str, str]] = field(default_factory=list)
+    verdict_sent: bool = False
 
 
 _current: contextvars.ContextVar[Optional[RaspContext]] = contextvars.ContextVar("shield360_rasp_context", default=None)

@@ -31,6 +31,7 @@ from shield360.rasp._iast import begin_iast, end_iast
 from shield360.rasp._model_output import set_model_output_recording
 from shield360.rasp._types import ATTACK_TYPES, MODES, Finding, RaspBlockedError
 from shield360.rasp._vpatch import BUILT_IN_RULES
+from shield360.rasp._edge_context import VERDICT_HEADER, edge_says_suspect, sign_verdict
 
 _RANK = {"off": 0, "monitor": 1, "block": 2}
 
@@ -56,6 +57,8 @@ class RemoteConfig:
     deception: Any = None
     # Events of the allow-list rules carry shield360.rasp.target (signed config only).
     report_targets: bool = False
+    # SHIELD: protection triangle — keys for Edge's context header and the app's verdicts (_edge_context.py).
+    edge_keys: List[Any] = field(default_factory=list)
 
 
 def _empty_allow() -> Dict[str, List[str]]:
@@ -198,6 +201,7 @@ def set_remote_config(c: Optional[RemoteConfig]) -> None:
         sinks=c.sinks if isinstance(c.sinks, list) else None,
         custom_rules=c.custom_rules if isinstance(c.custom_rules, list) else None,
         deception=c.deception,
+        edge_keys=list(getattr(c, "edge_keys", None) or []),
     )
     _state.custom_rules = parse_custom_rules(c.custom_rules, _state.application_name)
     _state.deception = parse_deception(c.deception)
@@ -334,8 +338,15 @@ def handle_finding(
         mode = f.action
     if mode == "off":
         return None
+    # SHIELD: protection triangle — a client Edge already marked is blocked for injection-class attacks this app only monitors.
+    ctx = current_context()
+    edge = getattr(ctx, "edge", None) if ctx else None
+    tightened = mode == "monitor" and not f.action and f.attack in _TIGHTEN and edge_says_suspect(edge) and not _state.monitor_only
+    if tightened:
+        mode = "block"
     decision = "blocked" if mode == "block" and f.attack != "xss" else "monitored"
     event_id = _report(f, sink, decision, mode, framework, route, method, path)
+    _send_verdict(f, decision)
     # Custom rules that look at built-in findings; the first blocking decision wins, the built-in one first.
     custom = None if f.attack == "custom_rule" else _run_finding_rules(f, sink, framework, route, method, path)
     if decision == "blocked":
@@ -343,6 +354,27 @@ def handle_finding(
     if custom is not None:
         raise custom
     return decision
+
+
+_TIGHTEN = {"sql_injection", "nosql_injection", "command_injection", "shell_spawn", "code_injection", "path_traversal", "ssrf", "deserialization", "xxe"}
+
+
+def _send_verdict(f: Finding, decision: str) -> None:
+    """SHIELD: protection triangle — tells Edge about a detection in a request that came through it (a signed response header)."""
+    try:
+        ctx = current_context()
+        edge = getattr(ctx, "edge", None) if ctx else None
+        keys = _state.remote.edge_keys if _state.remote else []
+        if not edge or not keys or getattr(ctx, "verdict_sent", False):
+            return
+        if f.attack == "custom_rule" and decision != "blocked":
+            return
+        v = sign_verdict(keys, edge["rid"], "block" if decision == "blocked" else "flag", str(f.attack), "rasp", 3600 if decision == "blocked" else 900)
+        if v:
+            ctx.response_headers.append((VERDICT_HEADER, v))
+            ctx.verdict_sent = True
+    except Exception:  # pylint: disable=broad-except
+        pass
 
 
 def report_deception(
@@ -395,6 +427,10 @@ def _report(
         opt("shield360.rasp.route", safe_route)
         opt("shield360.rasp.method", _safe_method(method if method is not None else (ctx.method if ctx else None)))
         opt("shield360.rasp.framework", framework if framework is not None else (ctx.framework if ctx else None))
+        # SHIELD: protection triangle — the Edge request this happened in (one correlated event in Shield360).
+        edge = getattr(ctx, "edge", None) if ctx else None
+        if edge:
+            attrs["shield360.edge.request_id"] = edge["rid"]
         opt("shield360.rasp.cve", f.cve if isinstance(f.cve, str) and _CVE.fullmatch(f.cve) else None)
         if remote is not None and remote.snippets and f.input:
             attrs["shield360.rasp.snippet"] = mask_snippet(f.input.value)

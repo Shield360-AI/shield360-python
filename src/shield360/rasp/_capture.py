@@ -10,9 +10,10 @@ from urllib.parse import parse_qsl
 
 from shield360.rasp._context import RaspContext, VpState, current_context, new_context, reset_context, set_context
 from shield360.rasp._custom_rules import custom_finding, match_request_rules, request_subject
-from shield360.rasp._engine import current_application_name, custom_rules, handle_finding, virtual_patches
+from shield360.rasp._engine import current_application_name, custom_rules, handle_finding, remote_config, virtual_patches
 from shield360.rasp._normalize import MAX_RAW_BODY, add_input, flatten, parse_cookies
 from shield360.rasp._vpatch import MAX_VP_TEXT, VpRequest, match_virtual_patches
+from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, verify_edge_context
 
 # Headers the contract treats as input (OpenRASP's headerInjection).
 INPUT_HEADERS = ("user-agent", "referer", "x-forwarded-for")
@@ -108,6 +109,12 @@ def capture_request(
         if v:
             add_input(inputs, v, f"header.{h}")
     ctx.vp = VpState(req=VpRequest(method=method, path=path, query=raw_query, headers=headers, cookie=cookie, body=""))
+    # SHIELD: protection triangle — Edge's signed context, verified (never trusted unverified).
+    edge_value = _header(headers, CONTEXT_HEADER)
+    if edge_value:
+        remote = remote_config()
+        keys = remote.edge_keys if remote else []
+        ctx.edge = verify_edge_context(keys, edge_value, method, path, _header(headers, REQUEST_ID_HEADER) or None)
     return ctx
 
 

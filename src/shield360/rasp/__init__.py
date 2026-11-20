@@ -60,6 +60,7 @@ from shield360.rasp._reporter import RaspReporter, collect_components
 from shield360.rasp._rule_expr import RULE_EXPR_LIMITS, RULE_FIELDS, compile_rule_expr, evaluate_rule_expr
 from shield360.rasp._sinks import BUILT_IN_SINKS, parse_sink_rule, parse_sink_rules, set_sink_rules
 from shield360.rasp._types import ATTACK_TYPES, BLOCK_MESSAGE, Finding, RaspBlockedError, RaspInput, block_body
+from shield360.rasp._edge_context import parse_edge_keys, sign_verdict, verify_edge_context  # noqa: F401 — protection triangle API
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,8 @@ def _to_remote(c: Dict[str, Any]) -> RemoteConfig:
         sinks=c["sinks"] if isinstance(c.get("sinks"), list) else None,
         custom_rules=c["customRules"] if isinstance(c.get("customRules"), list) else None,
         deception=c.get("deception"),
+        # SHIELD: protection triangle — the environment's Edge context keys.
+        edge_keys=parse_edge_keys(c.get("edgeContext")),
     )
 
 

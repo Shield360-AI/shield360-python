@@ -362,12 +362,15 @@ class RaspWSGIMiddleware:
 
         def start(status: str, headers: Any, *exc_info: Any) -> Any:
             seen["content-type"] = _response.content_type_of(headers)
+            # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
+            if ctx.response_headers:
+                headers = list(headers) + list(ctx.response_headers)
             return start_response(status, headers, *exc_info)
 
         try:
             result = cv.run(self.app, environ, start)
         except RaspBlockedError as e:
-            return _wsgi_blocked(start_response, e, sys.exc_info())
+            return _wsgi_blocked(lambda s, h, *x: start_response(s, list(h) + list(ctx.response_headers), *x), e, sys.exc_info())
         return _ScopedResponse(result, cv, start_response, seen)
 
 
