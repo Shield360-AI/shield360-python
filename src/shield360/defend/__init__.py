@@ -15,6 +15,7 @@ call on the request path unless ``shared_rate_limits`` is on. Fail open by
 default. The same contract as the TypeScript SDK: docs/latest/shield360/defend.mdx.
 """
 
+import ipaddress
 import json
 import os
 import re
@@ -38,6 +39,8 @@ from shield360.defend._engine import (
     path_under,
     rate_rules_for,
 )
+from shield360.defend._engine import _compiled, _in_any
+from shield360.defend._honeypots import Honeypots, fingerprint, parse_honeypots
 from shield360.client_type import BreadthCounter, classify_client
 from shield360.rasp._config_client import RaspConfigClient, parse_public_keys
 from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, parse_edge_keys, verify_edge_context
@@ -61,6 +64,17 @@ __all__ = [
     "path_under",
 ]
 
+_NEVER_TRAPPED = (
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "0.0.0.0/8",
+    "::1/128",
+    "fe80::/10",
+    "fc00::/7",
+)
 DEFEND_DECISIONS_PATH = "/api/defend/decisions"
 DEFEND_DECIDE_PATH = "/api/defend/decide"
 DEFEND_REPORT_PATH = "/api/defend/report"
@@ -186,6 +200,12 @@ def facts_of(
     address = _usable_ip(ip) or _forwarded_ip(headers.get("x-forwarded-for"), trust_proxy) or _usable_ip(own_ip)
     if address:
         facts["ip"] = address
+    if "?" in str(target):
+        facts["query"] = str(target).split("?", 1)[1][:2048]
+    elif isinstance(req, dict) and req.get("QUERY_STRING"):
+        facts["query"] = str(req["QUERY_STRING"])[:2048]
+    elif isinstance(req, dict) and isinstance(req.get("query_string"), (bytes, bytearray)):
+        facts["query"] = req["query_string"].decode("latin-1")[:2048]
     g = geo_headers or {}
     c = country if country is not None else (headers.get(g["country"].lower()) if g.get("country") else None)
     if isinstance(c, str) and re.match(r"^[A-Za-z]{2}$", c.strip()):
@@ -308,7 +328,9 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         post: Optional[Callable[..., Any]] = None,
         clock: Optional[Callable[[], float]] = None,
         background: bool = True,
+        honeypot_words: Optional[List[str]] = None,
     ):
+        self._hp_words = honeypot_words or []
         if not isinstance(app, str) or not app.strip():
             raise ValueError("create_defend: app (the app name in Shield360) is required")
         self.app = app.strip()
@@ -361,8 +383,66 @@ class Defend:  # pylint: disable=too-many-instance-attributes
     def _on_config(self, claims: Optional[Dict[str, Any]]) -> None:
         policy = parse_defend_policy(claims) if claims else None
         if policy is not None:
+            hp = parse_honeypots(claims.get("honeypots"))  # type: ignore[union-attr]
+            policy["honeypots"] = Honeypots(hp, self._hp_words, self._clock) if hp else None
             policy["edgeKeys"] = parse_edge_keys(claims.get("edgeContext"))  # type: ignore[union-attr]
         self._policy = policy
+
+    def _exempt(self, policy: Dict[str, Any], ip: Optional[str]) -> bool:
+        if not ip:
+            return True
+        try:
+            a = ipaddress.ip_address(ip)
+        except ValueError:
+            return True
+        # Private, loopback and link-local only (Python's is_private also counts documentation ranges).
+        if any(a in ipaddress.ip_network(n) for n in _NEVER_TRAPPED if ipaddress.ip_network(n).version == a.version):
+            return True
+        return _in_any(ip, _compiled(policy)["allow"])
+
+    def crumbs(self, request: Any, ip: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The honeypot crumbs made for this client, to place where agents look; None while off or for trusted clients."""
+        policy = self._policy
+        if not policy or not policy.get("honeypots"):
+            return None
+        facts = facts_of(request, ip=ip, **self._facts_opts)  # type: ignore[arg-type]
+        if self._exempt(policy, facts.get("ip")):
+            return None
+        return policy["honeypots"].crumbs_for(facts["ip"], facts["headers"].get("user-agent", ""))
+
+    def _honeypot_step(self, policy: Dict[str, Any], facts: Dict[str, Any], result: Dict[str, Any], mode: str) -> Dict[str, Any]:
+        hp: Honeypots = policy["honeypots"]
+        ip, ua = facts["ip"], facts["headers"].get("user-agent", "")
+        hit = hp.check(facts["path"], facts.get("query", ""), facts["headers"], fingerprint(ip, ua).hex())
+        decoy = hp.serve(facts["path"], ip, ua)
+        if not hit:
+            return {**result, "decoy": decoy} if decoy else result
+        action = hp.action_for(hit["level"])
+        if action != "monitor":
+            self._marks.mark(ip, policy["traps"]["ttlSeconds"])
+        reasons = (
+            ["trap:honeypot", f"level:{hit['level']}", f"crumb:{hit['state']}"]
+            + (["crumb:foreign"] if hit["foreign"] else [])
+            + [f"decoy:{hit['decoy']}"]
+        )
+        if self._reporter:
+            self._reporter.add(
+                {
+                    "kind": "trap_hit",
+                    "ip": ip,
+                    "path": facts["path"][:256],
+                    "method": facts["method"],
+                    "clientType": "suspected_ai_agent",
+                    "reasons": reasons,
+                    "ruleIds": [],
+                }
+            )
+        merged = {**result, "reasons": result["reasons"] + reasons, "clientType": "suspected_ai_agent"}
+        if decoy:
+            return {**merged, "decoy": decoy}
+        if action == "monitor" or mode == "monitor":
+            return merged
+        return {**merged, "decision": "deny" if action == "block" else "challenge", "ttl": policy["traps"]["ttlSeconds"]}
 
     def policy(self) -> Optional[Dict[str, Any]]:
         return self._policy
@@ -519,6 +599,15 @@ class Defend:  # pylint: disable=too-many-instance-attributes
             }
             shared = self._shared_over(base) if policy else None
             result = decide({**base, "rates": self._rates, "nowMs": self._clock() * 1000, "sharedOver": shared})
+            # Honeypots: the same stateless crumbs as Edge. Never for verified agents, trusted or private clients.
+            if (
+                policy
+                and policy.get("honeypots")
+                and result["decision"] == "allow"
+                and not (agent and agent["verified"])
+                and not self._exempt(policy, facts.get("ip"))
+            ):
+                result = self._honeypot_step(policy, facts, result, mode)
         except Exception:  # pylint: disable=broad-exception-caught
             result = fail_result(self._fail, "error", mode)
         self._report(result, facts)
@@ -581,6 +670,13 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         def middleware(environ, start_response):
             result = self.defend(environ)
             environ["shield360.defend"] = result
+            if result["decision"] == "allow" and result.get("decoy"):
+                d = result["decoy"]
+                start_response(
+                    f"{d['status']} {'OK' if d['status'] == 200 else 'Not Found'}",
+                    [("Content-Type", d["contentType"]), ("Cache-Control", "no-store")],
+                )
+                return [d["body"].encode()]
             if result["decision"] == "allow":
                 return app(environ, start_response)
             status = "401 Unauthorized" if result["decision"] == "require_sign_in" else "403 Forbidden"
@@ -606,6 +702,17 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                 result = defend.defend(scope)
                 scope.setdefault("state", {})
                 scope["state"]["shield360_defend"] = result
+                if result["decision"] == "allow" and result.get("decoy"):
+                    d = result["decoy"]
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": d["status"],
+                            "headers": [(b"content-type", d["contentType"].encode()), (b"cache-control", b"no-store")],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": d["body"].encode()})
+                    return None
                 if result["decision"] == "allow":
                     return await self.app(scope, receive, send)
                 status = 401 if result["decision"] == "require_sign_in" else 403
