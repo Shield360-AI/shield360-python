@@ -43,6 +43,7 @@ from shield360.agents._types import (
     AGENT_HEADER,
     DEFAULT_BASE_URL,
     DEFAULT_ISSUERS,
+    MAX_CLOCK_SKEW_SECONDS,
     MAX_LIFETIME_SECONDS,
     AgentCheck,
     AgentIdentity,
@@ -315,7 +316,7 @@ class AgentVerifier:
         report: ``{"api_key": ..., "base_url"?: ...}``: send results to the inbound decision log
             (batched on a background thread, never blocks the call).
         replay: where passport ids are remembered; default in memory, per process.
-        clock_skew_seconds: allowed clock difference with the issuer; default 60.
+        clock_skew_seconds: allowed clock difference with the issuer; default 60, at most 300.
         online_failure: what an unreachable issuer on an online check means: "allow" (default) or "deny".
         web_bot_auth: check Web Bot Auth signatures (RFC 9421, as Cloudflare's signed agents send them)
             on calls without a passport; default True. The signer's key directory is fetched from the
@@ -344,18 +345,26 @@ class AgentVerifier:
         if not self._audiences:
             raise ValueError("AgentVerifier: an audience (the receiver host or origin) is required")
         self._issuers = {normalise_issuer(i) for i in (list(issuers) if issuers else list(DEFAULT_ISSUERS))}
-        self._skew = max(0.0, float(clock_skew_seconds))
+        # Bounded: a skew of hours would stretch every passport's five-minute life and the replay window with it.
+        try:
+            asked = float(clock_skew_seconds)
+        except (TypeError, ValueError):
+            asked = 60.0
+        self._skew = min(float(MAX_CLOCK_SKEW_SECONDS), max(0.0, asked)) if math.isfinite(asked) else 60.0
         self._clock = clock or time.time
         self._http = http or urllib_transport
         self._keys = KeyCache(self._http, self._clock)
         self._replay: ReplayStore = replay if replay is not None else MemoryReplayStore(clock=self._clock)
+        # Anyone can mint Web Bot Auth signatures (any host with a key directory): in the default in-memory
+        # store they get their own, so a flood of them never pushes out (and re-opens) remembered passport ids.
+        self._signature_replay: ReplayStore = replay if replay is not None else MemoryReplayStore(clock=self._clock)
         self._policies = _PolicySource(policy, policy_from, self._http, self._clock)
         self._reporter = _Reporter(report, self._http) if _api_key(report) else None
         self._online_failure = online_failure
         # A transport given for tests is used for directories too; the default one never follows a redirect.
         self._web_bot_auth = (
             WebBotAuthVerifier(
-                self._audiences, DirectoryCache(http or directory_transport, self._clock), self._replay, self._skew, self._clock
+                self._audiences, DirectoryCache(http or directory_transport, self._clock), self._signature_replay, self._skew, self._clock
             )
             if web_bot_auth
             else None

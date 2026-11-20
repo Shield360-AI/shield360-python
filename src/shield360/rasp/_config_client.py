@@ -126,6 +126,16 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def is_rollback(nxt: Dict[str, Any], current: Optional[Dict[str, Any]]) -> bool:
+    """Whether ``nxt`` was signed before the config in force (beyond SKEW_S of clock skew)."""
+    if not current or not isinstance(current.get("iat"), (int, float)):
+        return False
+    iat = nxt.get("iat")
+    if not isinstance(iat, (int, float)) or isinstance(iat, bool):
+        return True
+    return iat + SKEW_S < current["iat"]
+
+
 def verify_config_jws(token: Any, keys: List[PinnedKey], app: str, now_s: Optional[float] = None) -> Dict[str, Any]:
     """Verifies a compact JWS against the given keys only: ``alg`` EdDSA,
     ``typ`` shield360-rasp+jws, an Ed25519 signature by the pinned key whose
@@ -332,6 +342,11 @@ class RaspConfigClient:  # pylint: disable=too-many-instance-attributes
             r = verify_config_jws(token, self._trusted(), self._app, self._now())
             if not r["ok"]:
                 self._warn(r["reason"])
+                return "rejected"
+            # A validly signed config older than the one in force is a replay
+            # (re-served from the path, kill switch and all): refused.
+            if is_rollback(r["claims"], self.current):
+                self._warn("rollback")
                 return "rejected"
             if not self._apply(r["claims"], token):
                 return "rejected"

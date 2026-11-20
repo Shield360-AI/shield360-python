@@ -203,6 +203,9 @@ def _kid_of(token: Any) -> Optional[str]:
         return None
 
 
+# How much older (seconds) a policy's iat may be than the newest applied before it counts as a rollback.
+ROLLBACK_SKEW_S = 60
+
 def verify_policy(token: Any, key: bytes, app: str, now: float) -> Optional[Dict[str, Any]]:
     if not isinstance(token, str) or len(token) > _MAX_JWS:
         return None
@@ -269,6 +272,7 @@ class ConfigClient:  # pylint: disable=too-many-instance-attributes
         self._get = get or _http_get
         self._now = now
         self._last_ver = -1
+        self._last_iat: float = 0
         self._stop = threading.Event()
 
     @property
@@ -312,6 +316,10 @@ class ConfigClient:  # pylint: disable=too-many-instance-attributes
                 break
         if signed is None:
             return False
+        # Rollback: a policy signed before one already applied is refused.
+        if signed["iat"] + ROLLBACK_SKEW_S < self._last_iat:
+            return False
+        self._last_iat = max(self._last_iat, signed["iat"])
         if pin and not self._keys:
             self._keys = [used]
         if signed["ver"] != self._last_ver:

@@ -390,3 +390,16 @@ def test_a_stopped_client_never_applies_or_caches_a_fetch_still_in_flight(env):
     assert env["applied"] == []
     assert c.current is None
     assert not c.load_cache()  # nothing was cached either
+
+
+def test_is_rollback_refuses_older_signed_config():
+    # SHIELD: security — a validly signed config older than the one in force is a replay.
+    from shield360.rasp._config_client import SKEW_S, is_rollback
+
+    current = {"iat": NOW}
+    assert is_rollback({"iat": NOW - 6 * 86400}, current)
+    assert not is_rollback({"iat": NOW - SKEW_S + 1}, current)
+    assert not is_rollback({"iat": NOW + 600}, current)
+    assert is_rollback({"iat": "soon"}, current)
+    assert is_rollback({}, current)
+    assert not is_rollback({"iat": NOW - 86400}, None)

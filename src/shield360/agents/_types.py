@@ -18,6 +18,8 @@ PASSPORT_TYP = "shield360-agent+jwt"
 DEFAULT_ISSUERS = ("https://app.shield360.ai",)
 DEFAULT_BASE_URL = "https://app.shield360.ai"
 MAX_LIFETIME_SECONDS = 300
+# The largest clock skew a verifier accepts; a larger clock_skew_seconds is lowered to it.
+MAX_CLOCK_SKEW_SECONDS = 300
 
 _MODES = ("observe", "enforce")
 # How strongly a passport shows the agent acts for a person, strongest first.

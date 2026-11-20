@@ -635,3 +635,12 @@ def test_report_carries_new_fields(env):
     assert entry["agent"]["risk"] == "high"
     assert entry["onBehalfOf"]["assurance"] == "delegated" and entry["onBehalfOf"]["mandate"] == MANDATE
     v.close()
+
+
+@pytest.mark.parametrize("asked, want", [(60, 60.0), (10**9, 300.0), (-5, 0.0), (float("inf"), 60.0), (float("nan"), 60.0), ("x", 60.0)])
+def test_clock_skew_is_bounded(asked, want):
+    # SHIELD: security — a huge skew would stretch every passport's life and the replay window.
+    from shield360.agents import AgentVerifier
+
+    v = AgentVerifier(audience="https://shop.example", clock_skew_seconds=asked, web_bot_auth=False)
+    assert v._skew == want  # pylint: disable=protected-access
