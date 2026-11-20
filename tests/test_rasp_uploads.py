@@ -277,6 +277,15 @@ def test_route_mode_is_capped_without_a_pinned_key():
     assert _upload_events(events)[-1]["attrs"]["shield360.rasp.decision"] == "monitored"
 
 
+def test_listed_type_gets_past_type_checks_only():
+    use_engine("monitor", attacks={"malicious_upload": "block"})
+    set_remote_uploads({"routes": [{"route": "/api/avatar", "allow": ["executable"]}]})
+    _request(lambda: inspect_file_object("f", "tool.bin", None, io.BytesIO(b"\x7fELF\x02\x01\x01\x00")))
+    with pytest.raises(RaspBlockedError) as e:
+        _request(lambda: inspect_file_object("f", "a.jpg", None, io.BytesIO(SHELL)))
+    assert e.value.rule == "upload.webshell"
+
+
 def test_trusted_hash_and_own_signatures():
     events = use_engine("monitor")
     sha = inspect_bytes(SHELL).sha256

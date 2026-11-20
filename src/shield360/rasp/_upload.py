@@ -25,6 +25,7 @@ from shield360.rasp._upload_taint import check_new_location, forget_location, lo
 UPLOAD_SINK = "request.upload"
 DEEP_SINK = "upload.deep_scan"
 _DEEP_ENGINES = ("custom", "clamav", "reputation")
+_TYPE_RULES = frozenset(("upload.executable", "upload.script", "upload.type_mismatch"))
 
 
 def _route(ctx: Optional[RaspContext]) -> Optional[str]:
@@ -137,6 +138,9 @@ def apply_upload(ctx: Optional[RaspContext], field: str, name: Optional[str], co
     else:
         found = [f for f in v.findings if f.engine != "custom" or policy.deep_scan.mode != "off"] + policy_findings(v, policy)
     found.sort(key=lambda f: rule_rank(f.rule))
+    # A type the policy lists by name gets past the type checks (README: ``allow``).
+    if v.type in policy.allow or v.kind in policy.allow:
+        found = [f for f in found if f.rule not in _TYPE_RULES]
     if ctx is not None:
         ctx.uploads.append({"field": field, "name": name or "", "verdict": v})
     chosen = strongest(*(upload_finding(f, v, policy, field) for f in found))
