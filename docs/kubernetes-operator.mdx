@@ -98,9 +98,9 @@ helm install shield360 oci://ghcr.io/thinkfleetai/charts/shield360-operator \
 |---|---|
 | `shield360.endpoint` | Your Shield360 URL |
 | `apiKey.existingSecret`, `apiKey.key` | The Secret, in each listed namespace, that holds the API key (key `api-key` by default) |
-| `injectNamespaces.<namespace>` | Comma-separated languages: `nodejs`, `python`, `dotnet`, `java`, or `sdk` |
+| `injectNamespaces.<namespace>` | Comma-separated languages: `nodejs`, `python`, `dotnet`, `java`, or `sdk`; or `auto` to detect each container's language, so every deployment in the namespace is protected |
 | `shield360.environment` | Optional `deployment.environment`, such as `production` |
-| `shield360.raspMode` | Optional runtime protection default: `off`, `monitor` or `block` |
+| `shield360.raspMode` | Runtime protection default: `off`, `monitor` or `block` (empty means `monitor`) |
 
 The chart never takes the API key itself, so the key isn't in rendered manifests or in the Helm release. A namespace or pod annotation still wins over `injectNamespaces`, so one pod opts out with `shield360.ai/inject-nodejs: "false"`. Restart the workloads (`kubectl -n orders rollout restart deployment`) to instrument running pods.
 
@@ -110,6 +110,7 @@ To send the cluster's logs too, add `--set systemLogs.enabled=true` (see [System
 
 | Annotation | Value |
 |---|---|
+| `shield360.ai/inject` | On a namespace or a pod: `"true"`, the instrumentation's name, or `"false"`. The language is detected per container from its command, image and variables; containers it cannot place (a Go binary, a proxy) are left alone and named in the `Shield360Injected` event |
 | `shield360.ai/inject-nodejs`, `inject-python`, `inject-dotnet`, `inject-java` | `"true"` (the namespace's only instrumentation), the instrumentation's name, or `"false"` |
 | `shield360.ai/inject-sdk` | Adds only the configuration, for apps that already ship the SDK |
 | `shield360.ai/container-names` | Which containers to change, when a pod has several |

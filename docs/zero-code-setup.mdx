@@ -1,10 +1,12 @@
 ---
 title: "Zero-code setup: protect an app without changing it"
 sidebarTitle: "Zero-code setup"
-description: "Turn on Shield360 telemetry and runtime protection for Node.js, Python, .NET and Java apps from environment variables and a start-up flag, with no code change and no rebuild."
+description: "Turn on Shield360 telemetry and runtime protection for Node.js, Python, Java, .NET and PHP apps with one command or one Kubernetes annotation, with no code change and no rebuild."
 ---
 
 You can turn on Shield360, telemetry and [runtime protection](https://shield360.ai), without editing or rebuilding your app. Settings come from the usual environment variables, and each language has its own way to load the SDK before the app starts.
+
+Runtime protection is on from the start, in **monitor** mode: attacks are reported and nothing is blocked. Set `SHIELD360_RASP=block` (or `shield360 run --rasp block`) when you are ready to block, or `off` to turn it off.
 
 Every entry point follows three rules:
 
@@ -20,7 +22,7 @@ Set these on the process, whatever the language:
 export SHIELD360_URL=https://app.shield360.ai
 export SHIELD360_API_KEY=<your API key>          # Settings → Developer → API keys
 export OTEL_SERVICE_NAME=orders-api
-export SHIELD360_RASP=monitor                    # or block; leave unset for telemetry only
+export SHIELD360_RASP=monitor                    # the default; block blocks attacks, off turns RASP off
 export SHIELD360_CONFIG_PUBLIC_KEY='<JWK from the app’s Runtime protection settings>'
 export SHIELD360_IAST=on                         # optional: report vulnerabilities
 export SHIELD360_GUARDS=prompt_injection:block,pii:warn   # optional, Node.js: guards on LLM calls
@@ -30,15 +32,34 @@ The API key decides which project environment the app reports to. See [Pin the c
 
 ## Start the app
 
-The quickest way, with the [Shield360 CLI](https://shield360.ai) on your machine: put `shield360 run --` in front of the command you already use. Nothing is installed in the app and no file changes.
+The quickest way, with the [Shield360 CLI](https://shield360.ai) on your machine: put `shield360 run --` in front of the command you already use. Nothing changes in the app, and nothing is rebuilt.
+
+| Runtime | Command | What `run` adds |
+|---|---|---|
+| Node.js | `shield360 run -- node server.js` (or `npm start`) | `NODE_OPTIONS=--require <SDK>/register`. The SDK is installed once into `~/.shield360/sdk`. |
+| Python | `shield360 run -- uvicorn main:app` | The SDK's start-up bootstrap first on `PYTHONPATH`. The app's environment needs `pip install shield360`. |
+| Java | `shield360 run -- java -jar orders.jar` | `JAVA_TOOL_OPTIONS=-javaagent:` the OpenTelemetry Java agent (telemetry, downloaded once and checked by SHA-256), plus the Shield360 agent for runtime protection when `--java-rasp-agent` or `SHIELD360_JAVA_AGENT` names it. |
+| .NET | `shield360 run -- dotnet Orders.dll` | `DOTNET_STARTUP_HOOKS` (and the .NET 8/9 deps and store) from `--dotnet-hook-dir`, `SHIELD360_DOTNET_HOOK_DIR` or `~/.shield360/sdk/dotnet`. |
+| PHP | `shield360 run -- php -S 0.0.0.0:8080 -t public` | `auto_prepend_file` set to the SDK's `zero-code/prepend.php`, through `PHP_INI_SCAN_DIR` (PHP's own `conf.d` still loads). The SDK comes from `vendor/shield360/sdk`, `--php-sdk-dir` or `~/.shield360/sdk/php`. |
 
 ```bash
 shield360 run -- npm start
 shield360 run --app checkout --env staging -- node server.js
 shield360 run -- uvicorn main:app --reload
+shield360 run --rasp block -- ./start.sh
 ```
 
-It reads the Shield360 address and key from `SHIELD360_URL` and `SHIELD360_API_KEY` (or `shield360 configure`). The app is named after its `package.json` or `pyproject.toml`, else its directory (`--app` to choose), and its data goes to the `dev` environment unless `--env` or `SHIELD360_ENVIRONMENT` says otherwise. Application logs are captured. For Node, the SDK is installed once into `~/.shield360/sdk` and reused. For Python, the app's interpreter needs the `shield360` package. The command's output, exit status and Ctrl-C pass straight through.
+`run` tells the runtime from the command (`node`, `gunicorn`, `java`, `dotnet`, `php`), then from the file it runs (a script's `#!` line, a compiled binary, a .NET app host next to its `.dll`), then from the project files in the directory (`package.json`, `pyproject.toml`, `pom.xml`, `*.csproj`, `composer.json`), and says which on its first line. Pass `--runtime` when it guesses wrong.
+
+It reads the Shield360 address and key from `SHIELD360_URL` and `SHIELD360_API_KEY` (or `shield360 configure`), and the app's name and RASP mode from `.shield360.env` when [`shield360 init`](https://shield360.ai) wrote one. The app is named after its `package.json` or `pyproject.toml`, else its directory (`--app` to choose), and its data goes to the `dev` environment unless `--env` or `SHIELD360_ENVIRONMENT` says otherwise. Application logs are captured. The command's output, exit status and Ctrl-C pass straight through.
+
+### What cannot be wrapped
+
+| App | Why | Protect it with |
+|---|---|---|
+| Go and Rust binaries | Compiled to machine code: there is no loader to start Shield360 in. `run` recognizes them and says so. | [Shield360 Edge](https://shield360.ai) in front of the app (WAF, bot and API protection, request telemetry) and the Shield360 host agent on the machine, which sees the app's processes and network calls with eBPF. In code: the Go or Rust SDK. |
+| Ruby | There is no Shield360 Ruby SDK yet. | Edge in front and the host agent, as above. |
+| Frozen or single-file apps (PyInstaller, Node single-executable apps, .NET self-contained single file) | The runtime ignores the variables that load Shield360. | Edge and the host agent, or the SDK in code. |
 
 To bake it into the app's container image instead, `shield360 init --write` adds the SDK (Node) or the agent (Java) to the Dockerfile and writes the app's settings next to it; see [shield360 init](https://shield360.ai).
 
@@ -74,7 +95,9 @@ To set it up in the app itself, or for a production start command:
     shield360-instrument uvicorn main:app
     ```
 
-    With `SHIELD360_RASP` set, the runtime protection middleware is added to Flask, Starlette/FastAPI and Django apps as they are created. Your app's own `sitecustomize` still runs.
+    The runtime protection middleware is added to Flask, Starlette/FastAPI and Django apps as they are created. Your app's own `sitecustomize` still runs.
+
+    Where the start command cannot change, make `import shield360.auto` the first line of the app's entry module: it does the same start from the same variables.
 
     Each request to a Django, Flask, FastAPI, Starlette, Pyramid, Falcon or Tornado app becomes a trace named by its route (`GET /orders/<oid>`). Inside it appear outgoing HTTP (`requests`, `httpx`, `aiohttp`, `urllib`, `urllib3`), PostgreSQL (`psycopg`, `psycopg2`, `asyncpg`), SQLAlchemy, MySQL (`pymysql`, `mysqlclient`), MongoDB (`pymongo`), Redis, Celery tasks, gRPC, Kafka (`kafka-python`, `confluent-kafka`) and AWS calls (`botocore`, so `boto3` too). Message payloads and keys are never recorded. For GraphQL, add your framework's OpenTelemetry extension (Strawberry's `OpenTelemetryExtension`, Ariadne's `OpenTelemetryExtension`); its spans join the request trace. Values stay out: a Redis command is stored as `GET ?`, MongoDB statements are off, and SQL is recorded without parameters. Health paths (`/healthz`, `/readyz`, `/livez`, `/health`, `/ping`, `/metrics` and the like) and calls to `SHIELD360_URL` are not traced unless you set `OTEL_PYTHON_EXCLUDED_URLS` yourself. Turn an instrumentation off with `SHIELD360_DISABLED_INSTRUMENTORS`, for example `redis,celery`.
   </Tab>
@@ -99,17 +122,34 @@ To set it up in the app itself, or for a production start command:
 
     For telemetry with no code change, start the app with `shield360 run -- java -jar your-app.jar`: it adds the OpenTelemetry Java agent, which traces HTTP, JDBC, Redis, Kafka and gRPC and sends logs to Shield360. The Shield360 agent below adds runtime protection; both can run together.
 
-    The agent turns runtime protection on and installs the sink hooks with no code change. Register the `Shield360RaspFilter` servlet filter as well, so runtime protection sees each request's input. The agent doesn't set up telemetry: add `shield360-sdk` and call `Shield360.init` for that.
+    The agent turns runtime protection on (monitor mode unless `SHIELD360_RASP` says otherwise) and installs the sink hooks with no code change. Register the `Shield360RaspFilter` servlet filter as well, so runtime protection sees each request's input. The agent doesn't set up telemetry: add `shield360-sdk` and call `Shield360.init` for that.
+  </Tab>
+  <Tab title="PHP">
+    ```bash
+    composer require shield360/sdk
+    php -d auto_prepend_file=vendor/shield360/sdk/zero-code/prepend.php -S 0.0.0.0:8080 -t public
+    ```
+
+    For PHP-FPM or Apache `mod_php`, set `auto_prepend_file` to the same file in `php.ini` or a `conf.d` file, and pass the `SHIELD360_*` variables through the pool (`env[SHIELD360_URL] = ...`). The file starts the SDK from the environment and captures each web request for runtime protection. The sink hooks on PDO, shell, file and curl calls need the `opentelemetry` PHP extension; without it, request checks and virtual patches still run. It replaces an `auto_prepend_file` the app already sets.
   </Tab>
 </Tabs>
 
-Go, PHP and Rust have no zero-code entry point. Go and Rust compile the checks into the app, and PHP starts through its bootstrap. See each SDK's reference.
+Go and Rust have no zero-code entry point: they compile the checks into the app (see [What cannot be wrapped](#what-cannot-be-wrapped)). See each SDK's reference.
 
 In Go, three one-line wraps give the same request tracing after `shield360.Init`: `shield360.Handler(mux, "orders-api")` traces each request by its `ServeMux` route (`GET /orders/{id}`) and leaves health probes out, `shield360.HTTPClient()` (or `shield360.Transport(base)`) traces outgoing calls except those to Shield360, and `shield360.OpenDB(driver, dsn)` traces SQL statements without their arguments. Redis, MongoDB, gRPC, Kafka and AWS calls join the trace through one-line hooks in their own packages: `goredis.Instrument(rdb)`, `mongodb.Monitor()`, `grpctrace.DialOption()` / `grpctrace.ServerOption()`, `kafkago.WriteMessages` / `kafkago.StartProcess` and `awstrace.Instrument(&cfg)` (see the Go SDK README). Keys, values, documents and message payloads are never recorded.
 
 ## On Kubernetes
 
-The [Shield360 operator](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/kubernetes-operator.mdx) applies the same entry points to pods by annotation, without changing their images.
+The [Shield360 operator](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/kubernetes-operator.mdx) applies the same entry points to pods by annotation, without changing their images, with runtime protection in monitor mode unless the `Shield360Instrumentation` sets `spec.rasp.mode`.
+
+To protect every deployment in a namespace, whatever language each one runs, annotate the namespace (operator chart 0.5.0 or later) and restart its deployments:
+
+```bash
+kubectl annotate namespace shop shield360.ai/inject=true
+kubectl -n shop rollout restart deployment
+```
+
+The operator detects each container's language from its command, image and variables. Containers it cannot place (a Go binary, a proxy sidecar) are left alone and named in the pod's `Shield360Injected` event. Use `shield360.ai/inject-<language>` on a pod to choose the language yourself, or `shield360.ai/inject: "false"` to leave a pod out.
 
 ## Next steps
 
