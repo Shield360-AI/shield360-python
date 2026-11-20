@@ -136,7 +136,9 @@ def is_rollback(nxt: Dict[str, Any], current: Optional[Dict[str, Any]]) -> bool:
     return iat + SKEW_S < current["iat"]
 
 
-def verify_config_jws(token: Any, keys: List[PinnedKey], app: str, now_s: Optional[float] = None) -> Dict[str, Any]:
+def verify_config_jws(
+    token: Any, keys: List[PinnedKey], app: str, now_s: Optional[float] = None, typ: str = JWS_TYPE
+) -> Dict[str, Any]:
     """Verifies a compact JWS against the given keys only: ``alg`` EdDSA,
     ``typ`` shield360-rasp+jws, an Ed25519 signature by the pinned key whose
     kid matches the header (any pinned key when the header names none
@@ -154,7 +156,7 @@ def verify_config_jws(token: Any, keys: List[PinnedKey], app: str, now_s: Option
             return {"ok": False, "reason": "malformed"}
         if h.get("alg") != "EdDSA":
             return {"ok": False, "reason": "alg"}
-        if h.get("typ") != JWS_TYPE:
+        if h.get("typ") != typ:
             return {"ok": False, "reason": "typ"}
         kid = h.get("kid") if isinstance(h.get("kid"), str) else None
         candidates = [k for k in keys if kid and k.kid == kid] or list(keys)
@@ -208,7 +210,12 @@ class RaspConfigClient:  # pylint: disable=too-many-instance-attributes
         fetch: Optional[Callable[[str, Dict[str, str], float], FetchResult]] = None,
         now: Optional[Callable[[], float]] = None,
         rand: Optional[Callable[[], float]] = None,
+        path: str = "/api/rasp/config",
+        jws_type: str = JWS_TYPE,
     ):
+        # SHIELD: Defend reuses this client for its signed policy (/api/defend/policy, shield360-defend+jws).
+        self._path = path
+        self._jws_type = jws_type
         self._base = url.rstrip("/")
         self._api_key = api_key
         self._app = app
@@ -276,7 +283,7 @@ class RaspConfigClient:  # pylint: disable=too-many-instance-attributes
                 return False
             if not self._pinned and self._allow_unpinned and not self._tofu:
                 self._tofu = parse_public_keys({"keys": saved.get("tofu") or []})
-            r = verify_config_jws(saved.get("config"), self._trusted(), self._app, self._now())
+            r = verify_config_jws(saved.get("config"), self._trusted(), self._app, self._now(), self._jws_type)
             if not r["ok"]:
                 return False
             return self._apply(r["claims"])
@@ -321,7 +328,7 @@ class RaspConfigClient:  # pylint: disable=too-many-instance-attributes
             headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"}
             if self._etag and self.current is not None:
                 headers["If-None-Match"] = self._etag
-            url = f"{self._base}/api/rasp/config?app={urllib.parse.quote(self._app, safe='')}"
+            url = f"{self._base}{self._path}?app={urllib.parse.quote(self._app, safe='')}"
             status, resp_headers, raw = self._fetch(url, headers, _FETCH_TIMEOUT_S)
             if status == 304:
                 return "unchanged"
@@ -339,7 +346,7 @@ class RaspConfigClient:  # pylint: disable=too-many-instance-attributes
                 if first is not None:
                     self._tofu = [first]
                     self._warn("trust_on_first_use")
-            r = verify_config_jws(token, self._trusted(), self._app, self._now())
+            r = verify_config_jws(token, self._trusted(), self._app, self._now(), self._jws_type)
             if not r["ok"]:
                 self._warn(r["reason"])
                 return "rejected"

@@ -532,6 +532,27 @@ With a Shield360 URL and API key, the SDK reports the packages the process runs 
 
 Turn it off with `shield360.init(runtime_packages=False)` or `SHIELD360_RUNTIME_PACKAGES=off`.
 
+## Defend (app protection) - `shield360.defend`
+
+Decide on every request whether to allow, block or challenge the caller, inside your app, from a signed policy
+built from your Shield360 rules, your blocks and automatic responses, and traps for AI agents. No network call per
+request; fails open by default. The same contract as the TypeScript SDK.
+
+```python
+from shield360.defend import create_defend
+
+# SHIELD360_CONFIG_PUBLIC_KEY pins the key the policy must be signed with (Security → RASP → Rules & setup).
+shield = create_defend("checkout", url=os.environ["SHIELD360_URL"], api_key=os.environ["SHIELD360_API_KEY"])
+
+app.wsgi_app = shield.wsgi(app.wsgi_app)          # Flask / Django (WSGI)
+app.add_middleware(shield.asgi_middleware())      # FastAPI / Starlette (ASGI)
+result = shield.defend(request, content=prompt)   # by hand: {"decision", "reasons", "ruleIds", "ttl"}
+shield.trap_hit(request, "decoy_admin")           # blocks this client's next request here at once, everywhere within ~5 s
+```
+
+Verifying the policy needs `cryptography` (`pip install 'shield360[agents]'`). See
+[Defend](https://shield360.ai).
+
 ## Runtime protection (RASP)
 
 Runtime application self-protection is off until you turn it on with `shield360.init(rasp=True)` (or a dict of options) or `SHIELD360_RASP=monitor|block`. `SHIELD360_RASP=off` always wins. It monitors by default; blocking is opt-in per attack type. Every check fails open: the only error RASP raises on purpose is `shield360.RaspBlockedError`, which the middleware turns into a 403 with `{"error", "attack", "rule", "event"}`. Request input stays in memory for the request only. Events name the attack, the rule and where the input came from (`query.id`), never the value. The contract shared by all Shield360 SDKs is [`sdk/rasp/README.md`](../rasp/README.md).
