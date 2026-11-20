@@ -21,6 +21,7 @@ from shield360.__helpers import parse_exporters
 from shield360.otel.code_location import CodeLocationSpanProcessor, capture_enabled
 # Cost per end customer: stamps the customer in effect on every span.
 from shield360._customer import CustomerSpanProcessor
+from shield360.otel.query_redaction import QueryRedactionSpanProcessor
 
 # pylint: disable=ungrouped-imports
 if os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "grpc":
@@ -73,6 +74,8 @@ def setup_tracing(
 
             if isinstance(existing_provider, TracerProvider):
                 logger.info("Detected existing TracerProvider, reusing it")
+                # SHIELD: credential query values never reach a span (query_redaction.py).
+                existing_provider.add_span_processor(QueryRedactionSpanProcessor())
             else:
                 # No SDK provider configured yet -- create one.
                 resource = Resource.create(
@@ -87,6 +90,8 @@ def setup_tracing(
                 trace.set_tracer_provider(TracerProvider(resource=resource))
                 # Customer processor first, so every exporter sees its attributes.
                 trace.get_tracer_provider().add_span_processor(CustomerSpanProcessor())
+                # SHIELD: query redaction runs before any exporter, so none sees a credential in a URL.
+                trace.get_tracer_provider().add_span_processor(QueryRedactionSpanProcessor())
 
                 if otlp_endpoint is not None:
                     os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = otlp_endpoint
