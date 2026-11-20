@@ -231,3 +231,60 @@ def test_off_and_wsgi(tmp_path):
     assert seen == ["403 Forbidden"] and body == [b'{"error":"Forbidden"}']
     off = make(s, tmp_path, env={"SHIELD360_DEFEND": "off"})
     assert off.defend({"method": "GET", "path": "/admin"})["reasons"] == ["off"]
+
+
+def _ctx_header(key, **over):
+    import hmac as _hmac  # pylint: disable=import-outside-toplevel
+    import hashlib as _hashlib  # pylint: disable=import-outside-toplevel
+    from shield360.rasp._edge_context import path_hash  # pylint: disable=import-outside-toplevel
+
+    now = int(time.time())
+    payload = {
+        "rid": f"req_{now}{len(over)}abcd",
+        "iat": now,
+        "exp": now + 30,
+        "m": "GET",
+        "ph": path_hash("/api/x"),
+        "ct": "unknown",
+        "risk": 0,
+        "trap": 0,
+        "fl": False,
+    }
+    payload.update(over)
+    p = b64(json.dumps(payload).encode())
+    return f"v1.0a1b2c3d.{p}.{b64(_hmac.new(key, ('s360-ctx|v1|' + p).encode(), _hashlib.sha256).digest())}"
+
+
+def test_default_classifier_and_edge_context(tmp_path):
+    edge_key = b"0123456789abcdef0123456789abcdef"
+    s = Server(
+        claims(
+            rules=[{"id": "auto", "action": "challenge", "clientTypes": ["unverified_automation"]}],
+            edgeContext={"keys": [{"kid": "0a1b2c3d", "key": b64(edge_key)}]},
+        )
+    )
+    d = make(s, tmp_path, report=False)
+    r = d.defend({"method": "GET", "path": "/api/x", "ip": "203.0.113.9", "headers": {"user-agent": "curl/8.4.0"}})
+    assert (
+        r["decision"] == "challenge"
+        and r["clientType"] == "unverified_automation"
+        and "client:ua_automation:curl" in r["reasons"]
+    )
+    caught = d.defend(
+        {
+            "method": "GET",
+            "path": "/api/x",
+            "ip": "203.0.113.11",
+            "headers": {"x-shield360-edge-context": _ctx_header(edge_key, ct="suspected_agent", trap=2, fl=True)},
+        }
+    )
+    assert caught["decision"] == "deny" and caught["reasons"] == ["trap_hit"]
+    crawler = d.defend(
+        {
+            "method": "GET",
+            "path": "/api/x",
+            "ip": "203.0.113.12",
+            "headers": {"x-shield360-edge-context": _ctx_header(edge_key, ct="verified_crawler", trap=3, rid="req_crawler_0001")},
+        }
+    )
+    assert crawler["decision"] == "allow"

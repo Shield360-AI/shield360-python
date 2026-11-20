@@ -38,7 +38,9 @@ from shield360.defend._engine import (
     path_under,
     rate_rules_for,
 )
+from shield360.client_type import BreadthCounter, classify_client
 from shield360.rasp._config_client import RaspConfigClient, parse_public_keys
+from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, parse_edge_keys, verify_edge_context
 from shield360.rasp._deception import SuspiciousTable
 from shield360.rasp._rule_expr import parse_ip_bytes
 
@@ -172,7 +174,15 @@ def facts_of(
             )
     except Exception:  # pylint: disable=broad-exception-caught
         pass
-    facts: Dict[str, Any] = {"method": str(method).upper()[:16], "path": path_of(str(target)), "headers": headers}
+    raw = (
+        re.split(
+            r"[?#]",
+            urllib.parse.urlsplit(str(target)).path if re.match(r"^[a-z][a-z0-9+.-]*://", str(target), re.I) else str(target),
+            maxsplit=1,
+        )[0]
+        or "/"
+    )
+    facts: Dict[str, Any] = {"method": str(method).upper()[:16], "path": path_of(str(target)), "rawPath": raw, "headers": headers}
     address = _usable_ip(ip) or _forwarded_ip(headers.get("x-forwarded-for"), trust_proxy) or _usable_ip(own_ip)
     if address:
         facts["ip"] = address
@@ -288,7 +298,7 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         trust_proxy: int = 0,
         geo_headers: Optional[Dict[str, str]] = None,
         agents: Any = None,
-        classify: Optional[Callable[[Dict[str, Any], Dict[str, bool]], Optional[Dict[str, Any]]]] = None,
+        classify: Any = None,
         sensitive_data: str = "monitor",
         report: bool = True,
         shared_rate_limits: bool = False,
@@ -312,6 +322,7 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         self._url, self._key = url, api_key
         self._post = post or _post
         self._rates = RateTable()
+        self._breadth = BreadthCounter()
         self._marks = SuspiciousTable(10_000, clock=self._clock)
         self._policy: Optional[Dict[str, Any]] = None
         self._stop = threading.Event()
@@ -348,7 +359,10 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         self._feed_etag: Optional[str] = None
 
     def _on_config(self, claims: Optional[Dict[str, Any]]) -> None:
-        self._policy = parse_defend_policy(claims) if claims else None
+        policy = parse_defend_policy(claims) if claims else None
+        if policy is not None:
+            policy["edgeKeys"] = parse_edge_keys(claims.get("edgeContext"))  # type: ignore[union-attr]
+        self._policy = policy
 
     def policy(self) -> Optional[Dict[str, Any]]:
         return self._policy
@@ -456,7 +470,24 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                     }
                 except Exception:  # pylint: disable=broad-exception-caught
                     agent = None
+            # Protection triangle: what Edge in front says about this client, verified (never trusted unverified).
+            keys = (policy or {}).get("edgeKeys") or []
+            ctx_value = facts["headers"].get(CONTEXT_HEADER)
+            if ctx_value and keys:
+                edge = verify_edge_context(
+                    keys,
+                    ctx_value,
+                    facts["method"],
+                    facts.get("rawPath") or facts["path"],
+                    facts["headers"].get(REQUEST_ID_HEADER) or None,
+                    self._clock(),
+                )
+                if edge:
+                    facts["edge"] = {"ct": edge["ct"], "trap": edge["trap"], "fl": edge["fl"], "risk": edge["risk"]}
+            edge_verified = (facts.get("edge") or {}).get("ct") in ("verified_agent", "verified_crawler")
             trap = bool(facts.get("ip")) and self._marks.is_suspicious(facts["ip"])
+            # A client Edge's honeypots caught following a trail (level 2+) is a trap hit here too.
+            trap = trap or ((facts.get("edge") or {}).get("trap", 0) >= 2)
             if not trap and facts.get("ip"):
                 try:
                     from shield360.rasp._deception import suspicious_table  # pylint: disable=import-outside-toplevel
@@ -464,10 +495,15 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                     trap = suspicious_table().is_suspicious(facts["ip"])
                 except Exception:  # pylint: disable=broad-exception-caught
                     trap = False
+            trap = trap and not edge_verified
             classification = None
-            if self._classify and not (agent and agent["verified"]) and not trap:
+            if self._classify is not False and not (agent and agent["verified"]) and not trap:
                 try:
-                    classification = self._classify(facts, {"verifiedAgent": False, "trapHit": False})
+                    if self._classify:
+                        classification = self._classify(facts, {"verifiedAgent": False, "trapHit": False})
+                    else:
+                        breadth = self._breadth.see(facts["ip"], facts["path"], self._clock()) if facts.get("ip") else None
+                        classification = classify_client(facts["headers"], {"edge": facts.get("edge"), "breadth": breadth})
                 except Exception:  # pylint: disable=broad-exception-caught
                     classification = None
             base = {
