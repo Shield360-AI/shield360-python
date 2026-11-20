@@ -4,8 +4,8 @@ Shield360 zero-code bootstrap.
 ``shield360-instrument`` puts this directory first on PYTHONPATH, so Python
 runs this module at start-up, before the app imports anything. It
 initializes Shield360 from SHIELD360_* / OTEL_* environment variables
-(telemetry and, with SHIELD360_RASP=monitor|block, RASP and the framework
-middleware), the same pattern as OpenTelemetry's auto-instrumentation.
+(telemetry and RASP with the framework middleware; RASP is in monitor
+mode unless SHIELD360_RASP says block or off), the same pattern as OpenTelemetry's auto-instrumentation.
 
 Fail open: a failure logs one warning and the app starts without Shield360.
 A later ``shield360.init()`` in the app's own code is a no-op. An app's own
@@ -37,25 +37,13 @@ def initialize(*, swallow_exceptions: bool = True) -> None:
     """
     _drop_from_pythonpath()
     try:
-        import shield360  # pylint: disable=import-outside-toplevel
         from shield360 import _zero_code  # pylint: disable=import-outside-toplevel
-        from shield360.cli.config import build_config_from_environment  # pylint: disable=import-outside-toplevel
-
-        if _zero_code.started():
-            return
-        shield360.init(**build_config_from_environment())
-        _zero_code.mark_started()
-
-        from shield360.rasp import rasp_active  # pylint: disable=import-outside-toplevel
-
-        if rasp_active():
-            from shield360.rasp import _autowire  # pylint: disable=import-outside-toplevel
-
-            _autowire.install()
     except Exception as e:  # pylint: disable=broad-exception-caught
         if not swallow_exceptions:
             raise
         logger.warning("Shield360: zero-code start-up failed (%s: %s); the app runs without Shield360.", type(e).__name__, e)
+        return
+    _zero_code.start_from_environment(swallow_exceptions=swallow_exceptions)
 
 
 def _chain_next_sitecustomize() -> None:

@@ -173,7 +173,7 @@ pip install shield360
 export OTEL_SERVICE_NAME=orders-api
 export SHIELD360_URL=https://app.shield360.ai
 export SHIELD360_API_KEY=...                      # from Settings > API keys
-export SHIELD360_RASP=monitor                     # or block; leave unset for telemetry only
+export SHIELD360_RASP=monitor                     # the default; block blocks attacks, off turns RASP off
 export SHIELD360_CONFIG_PUBLIC_KEY='{"kty":"OKP",...}'  # Runtime protection settings
 
 shield360-instrument python app.py
@@ -184,8 +184,10 @@ shield360-instrument python manage.py runserver   # with DJANGO_SETTINGS_MODULE 
 The launcher works like `opentelemetry-instrument`: it puts a `sitecustomize` bootstrap first on `PYTHONPATH` and runs the command. Python runs the bootstrap at start-up, before the app imports anything, and it:
 
 - calls `shield360.init()` with the settings from the environment (`OTEL_SERVICE_NAME`, `OTEL_DEPLOYMENT_ENVIRONMENT`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `SHIELD360_URL`, `SHIELD360_API_KEY`, `SHIELD360_DISABLED_INSTRUMENTORS` and the other `SHIELD360_*` variables, see `shield360-instrument --help`);
-- with `SHIELD360_RASP=monitor|block`, adds the RASP middleware to apps as they are created: `rasp_flask(app)` for every `Flask(...)`, `RaspASGIMiddleware` as the first user middleware of Starlette and FastAPI apps (inside Starlette's error middleware, so a block from an endpoint is a 403, not a 500), and `shield360.rasp.RaspDjangoMiddleware` first in Django's `MIDDLEWARE`. Middleware the app adds itself as well is harmless: the inner one sees the request is already captured and passes it through;
+- turns RASP on in monitor mode when `SHIELD360_RASP` is unset (attacks are reported, nothing is blocked; `block` blocks, `off` turns it off), and adds the RASP middleware to apps as they are created: `rasp_flask(app)` for every `Flask(...)`, `RaspASGIMiddleware` as the first user middleware of Starlette and FastAPI apps (inside Starlette's error middleware, so a block from an endpoint is a 403, not a 500), and `shield360.rasp.RaspDjangoMiddleware` first in Django's `MIDDLEWARE`. Middleware the app adds itself as well is harmless: the inner one sees the request is already captured and passes it through;
 - then runs the app's own `sitecustomize`, if there is one further down the path, and leaves it as the `sitecustomize` module, so `import sitecustomize` in the app finds what it exports.
+
+Where the start command cannot change, make `import shield360.auto` the first line of the app's entry module instead. It does the same start (RASP in monitor mode included) from the same environment variables. The Shield360 CLI's `shield360 run -- <command>` and the Kubernetes operator use the launcher's bootstrap, so they need no change to the app at all.
 
 Rules it keeps:
 
@@ -200,7 +202,7 @@ Limits:
 - Django: set `DJANGO_SETTINGS_MODULE` in the environment rather than only in `manage.py`, so the Django instrumentation finds the settings at start-up.
 - Other frameworks (Tornado, Falcon, Pyramid, a bare WSGI or ASGI callable) still need the middleware added in code.
 
-No new environment variables: `SHIELD360_RASP` and the variables `shield360.init()` already reads are all it uses.
+No new environment variables: `SHIELD360_RASP` (`monitor` when unset, for a zero-code start only; `shield360.init()` in code leaves RASP off unless asked) and the variables `shield360.init()` already reads are all it uses.
 
 ## AWS Lambda
 

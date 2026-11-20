@@ -63,6 +63,40 @@ def test_rasp_off_leaves_rasp_inactive(tmp_path):
     assert result == {"loaded_first": True, "rasp": False}
 
 
+def test_rasp_is_on_in_monitor_mode_when_nothing_chose_a_mode(tmp_path):
+    env = _env(tmp_path)
+    del env["SHIELD360_RASP"]
+    result, _ = _launch(
+        tmp_path,
+        """
+        import json, os, sys
+        rasp = sys.modules.get("shield360.rasp")
+        print("RESULT " + json.dumps({"rasp": bool(rasp and rasp.rasp_active()), "mode": os.environ.get("SHIELD360_RASP")}))
+        """,
+        env,
+    )
+    assert result == {"rasp": True, "mode": "monitor"}
+
+
+def test_import_shield360_auto_starts_shield360_and_rasp_without_the_launcher(tmp_path):
+    env = _env(tmp_path)
+    del env["SHIELD360_RASP"]
+    app = tmp_path / "app.py"
+    app.write_text(
+        textwrap.dedent(
+            """
+            import shield360.auto  # the only change to the app
+            import json, os, shield360
+            print("RESULT " + json.dumps({"rasp": shield360.rasp.rasp_active(), "mode": os.environ.get("SHIELD360_RASP")}))
+            """
+        )
+    )
+    proc = subprocess.run([sys.executable, str(app)], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120, check=False)
+    assert proc.returncode == 0, proc.stderr
+    line = [l for l in proc.stdout.splitlines() if l.startswith(RESULT)][-1]
+    assert json.loads(line[len(RESULT):]) == {"rasp": True, "mode": "monitor"}
+
+
 def test_a_later_init_in_app_code_is_a_no_op(tmp_path):
     result, stderr = _launch(
         tmp_path,
