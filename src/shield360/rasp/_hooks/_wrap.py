@@ -105,9 +105,7 @@ def strongest(*findings: Optional[Finding]) -> Optional[Finding]:
     for f in findings:
         if f is None:
             continue
-        mode = _engine.mode_for(f.attack)
-        if f.action in _RANK and _RANK[f.action] < _RANK[mode]:
-            mode = f.action
+        mode = _engine.finding_mode(f)
         if f.attack == "xss" and mode == "block":
             mode = "monitor"
         if _RANK[mode] > best_rank:

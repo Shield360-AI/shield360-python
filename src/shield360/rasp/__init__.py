@@ -64,8 +64,13 @@ from shield360.rasp._edge_context import parse_edge_keys, sign_verdict, verify_e
 
 logger = logging.getLogger(__name__)
 
+from shield360.rasp._upload import inspect_upload  # noqa: E402
+from shield360.rasp._upload_deep import run_connection_test, set_reputation_client  # noqa: E402
+from shield360.rasp._upload_policy import configure_uploads, set_remote_uploads, upload_config  # noqa: E402
+
 __all__ = [
     "ATTACK_TYPES",
+    "inspect_upload",
     "BLOCK_MESSAGE",
     "RULE_EXPR_LIMITS",
     "RULE_FIELDS",
@@ -274,6 +279,9 @@ def init_rasp(
         )
         set_sink_rules(BUILT_IN_SINKS)
         configure_iast(o.get("iast"), application_name=application_name, environment=environment, env=env)
+        # SHIELD: uploads — inspection, deep scan and backdoor checks (README "Uploads").
+        configure_uploads(o.get("uploads"))
+        set_reputation_client(url, api_key)
         if not o["enabled"]:
             return False
         # The outbound check always allows the Shield360 and OTLP hosts.
@@ -306,6 +314,8 @@ def init_rasp(
             remote = _to_remote(claims) if claims else None
             set_remote_config(remote)
             set_iast_remote(claims)
+            set_remote_uploads(claims.get("uploads") if claims else None)
+            threading.Thread(target=run_connection_test, args=(upload_config().deep_scan,), daemon=True).start()
             # The platform's sink rules replace the built-in list when present.
             set_sink_rules(parse_sink_rules(remote.sinks) if remote is not None and remote.sinks is not None else BUILT_IN_SINKS)
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 import builtins
 import dis
 import importlib
+import os
 import sys
 import threading
 from typing import Any, Callable, List, Optional, Tuple
@@ -36,6 +37,7 @@ from shield360.rasp._context import current_context, inputs_of
 from shield360.rasp._hooks import _imports
 from shield360.rasp._hooks._wrap import Entry, argument, in_check, restore, run_check, wrap
 from shield360.rasp._types import RaspBlockedError
+from shield360.rasp._upload_taint import detect_upload_include, location_count
 
 _TAG = "rasp.include"
 _IMPORT_NAME = dis.opmap.get("IMPORT_NAME", -1)
@@ -206,9 +208,32 @@ def _add(entry: Optional[Entry]) -> None:
         _entries.append(entry)
 
 
+def _upload_before(sink: str, index: int, *names: str) -> Callable[[Callable[..., Any], Entry], Callable[..., Any]]:
+    """SHIELD: uploads — loading an uploaded file as code (``backdoor.include``), in a request or not."""
+
+    def build(fn: Callable[..., Any], entry: Entry) -> Callable[..., Any]:
+        def checked(*args: Any, **kwargs: Any) -> Any:
+            if entry.on and location_count():
+                path = argument(args, kwargs, index, *names)
+                if isinstance(path, (str, os.PathLike)):
+                    run_check(sink, lambda: detect_upload_include(os.fspath(path)))
+            return fn(*args, **kwargs)
+
+        return checked
+
+    return build
+
+
 def _patch_runpy(module: Any) -> None:
     _add(wrap(module, "run_module", _build("runpy.run_module", 0, "mod_name"), _TAG))
-    _add(wrap(module, "run_path", _build("runpy.run_path", 0, "path_name"), _TAG))
+    # SHIELD: uploads — the upload check runs first, whether or not the call is in a request.
+    inner = _build("runpy.run_path", 0, "path_name")
+    outer = _upload_before("runpy.run_path", 0, "path_name")
+    _add(wrap(module, "run_path", lambda fn, entry: outer(inner(fn, entry), entry), _TAG))
+
+
+def _patch_importlib_util(module: Any) -> None:
+    _add(wrap(module, "spec_from_file_location", _upload_before("importlib.util.spec_from_file_location", 1, "location"), _TAG))
 
 
 def install_include_hooks() -> bool:
@@ -222,6 +247,7 @@ def install_include_hooks() -> bool:
         _add(wrap(importlib, "import_module", _build("importlib.import_module", 0, "name"), _TAG))
         _add(wrap(builtins, "__import__", _build_dunder_import, _TAG))
         _imports.when_imported("runpy", _TAG, _patch_runpy)
+        _imports.when_imported("importlib.util", _TAG, _patch_importlib_util)
         return True
     except Exception:  # pylint: disable=broad-exception-caught
         uninstall_include_hooks()

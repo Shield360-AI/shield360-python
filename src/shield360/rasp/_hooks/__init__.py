@@ -22,6 +22,7 @@ from shield360.rasp._hooks.process import install_process_hooks, uninstall_proce
 from shield360.rasp._hooks.response import install_response_hook, uninstall_response_hook
 from shield360.rasp._hooks.sinks import install_sink_hooks, uninstall_sink_hooks
 from shield360.rasp._hooks.template import install_template_hooks, uninstall_template_hooks
+from shield360.rasp._hooks.uploads import install_upload_hooks, uninstall_upload_hooks
 
 __all__ = ["install_hooks", "uninstall_hooks"]
 
@@ -39,6 +40,7 @@ def install_hooks(always_allowed_hosts: Sequence[str] = ()) -> Dict[str, bool]:
         ("template", install_template_hooks),
         ("response", install_response_hook),
         ("sinks", install_sink_hooks),
+        ("uploads", install_upload_hooks),
     ):
         try:
             out[name] = bool(install())
@@ -50,6 +52,7 @@ def install_hooks(always_allowed_hosts: Sequence[str] = ()) -> Dict[str, bool]:
 def uninstall_hooks() -> None:
     """Removes every sink hook. Idempotent; never raises."""
     for uninstall in (
+        uninstall_upload_hooks,
         uninstall_sink_hooks,
         uninstall_response_hook,
         uninstall_template_hooks,

@@ -29,6 +29,7 @@ from shield360.rasp._engine import allow_lists
 from shield360.rasp._hooks import _imports
 from shield360.rasp._hooks._wrap import Depth, Entry, argument, restore, run_check, strongest, wrap_call
 from shield360.rasp._types import Finding
+from shield360.rasp._upload_taint import detect_upload_chmod, detect_upload_write
 
 _TAG = "rasp.files"
 _depth = Depth()
@@ -110,13 +111,26 @@ def destination(sink: str, src: Any, dst: Any) -> Any:
     return os.path.join(d, os.path.basename(s.rstrip("/\\")))
 
 
+def _upload_check(sink: str, first: Tuple[Any, str], second: Optional[Tuple[Any, str]]) -> Optional[Finding]:
+    """SHIELD: uploads — a write that stores an upload, or a rename, copy or move of one (README "Backdoor checks")."""
+    try:
+        if second is not None and second[1] in ("write", "rename"):
+            return detect_upload_write(path_text(destination(sink, first[0], second[0])), path_text(first[0]))
+        if second is None and first[1] in ("write", "append"):
+            return detect_upload_write(path_text(first[0]))
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    return None
+
+
 def _inspect(sink: str, first: Tuple[Any, str], second: Optional[Tuple[Any, str]] = None) -> None:
     def run() -> Optional[Finding]:
         one = _detect_one(path_text(first[0]), first[1])
+        backdoor = _upload_check(sink, first, second)
         if second is None:
-            return one
+            return strongest(one, backdoor)
         # Both paths; the stronger decision wins.
-        return strongest(one, _detect_one(path_text(destination(sink, first[0], second[0])), second[1]))
+        return strongest(one, _detect_one(path_text(destination(sink, first[0], second[0])), second[1]), backdoor)
 
     run_check(sink, run)
 
@@ -144,9 +158,16 @@ def _add(entry: Optional[Entry]) -> None:
         _entries.append(entry)
 
 
+def _chmod_before(args: Sequence[Any], kwargs: Dict[str, Any]) -> None:
+    """SHIELD: uploads — an execute bit on an uploaded file (``backdoor.chmod``)."""
+    path, mode = argument(args, kwargs, 0, "path"), argument(args, kwargs, 1, "mode")
+    run_check("os.chmod", lambda: detect_upload_chmod(path, mode))
+
+
 def _patch_os(module: Any) -> None:
     for name, ops in OS_APIS.items():
         _add(wrap_call(module, name, _two_path_before(f"os.{name}", ops), depth=_depth))
+    _add(wrap_call(module, "chmod", _chmod_before, depth=_depth))
 
 
 def _patch_shutil(module: Any) -> None:

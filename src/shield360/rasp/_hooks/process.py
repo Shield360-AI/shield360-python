@@ -29,6 +29,7 @@ from shield360.rasp._context import current_context, inputs_of
 from shield360.rasp._engine import allow_lists
 from shield360.rasp._hooks import _imports
 from shield360.rasp._hooks._wrap import Depth, Entry, argument, restore, run_check, strongest, wrap_call
+from shield360.rasp._upload_taint import command_words, detect_upload_exec
 from shield360.rasp._types import Finding, RaspInput
 
 _TAG = "rasp.process"
@@ -157,7 +158,10 @@ def _inspect(sink: str, target_of: Any) -> None:
         ctx = current_context()
         inputs = inputs_of(ctx) if ctx is not None else []
         # All of them, not the first: a command_injection set to off or monitor must not hide a shell_spawn that blocks.
-        return strongest(*process_findings(target, inputs, bool(ctx is not None and ctx.in_request), allow_lists()["commands"]))
+        # SHIELD: uploads — running an uploaded file (backdoor.exec), in a request or not.
+        argv = command_words(str(target["command"])) if "command" in target else [str(a) for a in target.get("argv", [])]  # type: ignore[union-attr]
+        backdoor = detect_upload_exec(argv)
+        return strongest(*process_findings(target, inputs, bool(ctx is not None and ctx.in_request), allow_lists()["commands"]), backdoor)
 
     run_check(sink, run)
 

@@ -1,0 +1,507 @@
+{
+  "version": "2026-11-20",
+  "comment": "Shield360 built-in web-shell signatures (sdk/rasp/README.md \"Uploads\", \"Signatures\"). Written for Shield360; not derived from any third-party rule set. Every SDK keeps a byte-identical copy.",
+  "rules": [
+    {
+      "id": "php.eval_request",
+      "title": "PHP code that evaluates request data",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "f0",
+          "regex": "eval\\s*\\(\\s*@?\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "eval"
+        },
+        {
+          "id": "f1",
+          "regex": "assert\\s*\\(\\s*@?\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "assert"
+        }
+      ],
+      "condition": "open and (f0 or f1)"
+    },
+    {
+      "id": "php.exec_request",
+      "title": "PHP code that runs shell commands from request data",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "f0",
+          "regex": "system\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "system"
+        },
+        {
+          "id": "f1",
+          "regex": "exec\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "exec"
+        },
+        {
+          "id": "f2",
+          "regex": "passthru\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "passthru"
+        },
+        {
+          "id": "f3",
+          "regex": "popen\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "popen"
+        },
+        {
+          "id": "f4",
+          "regex": "proc_open\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE|SERVER)",
+          "anchor": "proc_open"
+        }
+      ],
+      "condition": "open and (f0 or f1 or f2 or f3 or f4)"
+    },
+    {
+      "id": "php.backtick_request",
+      "title": "PHP backtick command from request data",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "tick",
+          "regex": "`\\$_(GET|POST|REQUEST|COOKIE)\\[",
+          "anchor": "`$_"
+        }
+      ],
+      "condition": "all"
+    },
+    {
+      "id": "php.eval_decoded",
+      "title": "PHP eval of decoded or decompressed data",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "eval",
+          "text": "eval(",
+          "nocase": true
+        },
+        {
+          "id": "b64",
+          "text": "base64_decode(",
+          "nocase": true
+        },
+        {
+          "id": "inf",
+          "text": "gzinflate(",
+          "nocase": true
+        },
+        {
+          "id": "unc",
+          "text": "gzuncompress(",
+          "nocase": true
+        },
+        {
+          "id": "rot",
+          "text": "str_rot13(",
+          "nocase": true
+        }
+      ],
+      "condition": "open and eval and (b64 or inf or unc or rot)"
+    },
+    {
+      "id": "php.preg_replace_e",
+      "title": "PHP preg_replace with the code-running /e modifier",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "pr",
+          "regex": "preg_replace\\s*\\(\\s*[\"'][^\"']{1,100}/[a-df-z]{0,5}e[a-z]{0,5}[\"']",
+          "anchor": "preg_replace"
+        }
+      ],
+      "condition": "all"
+    },
+    {
+      "id": "php.create_function_request",
+      "title": "PHP create_function or callback built from request data",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "f0",
+          "regex": "create_function\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "create_function"
+        },
+        {
+          "id": "f1",
+          "regex": "call_user_func\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "call_user_func"
+        },
+        {
+          "id": "f2",
+          "regex": "array_map\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "array_map"
+        },
+        {
+          "id": "f3",
+          "regex": "usort\\s*\\([^;]{0,80}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "usort"
+        }
+      ],
+      "condition": "open and (f0 or f1 or f2 or f3)"
+    },
+    {
+      "id": "php.write_request",
+      "title": "PHP code that writes request data to a file",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "f0",
+          "regex": "file_put_contents\\s*\\([^;]{0,100}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "file_put_contents"
+        },
+        {
+          "id": "f1",
+          "regex": "fwrite\\s*\\([^;]{0,100}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "fwrite"
+        },
+        {
+          "id": "f2",
+          "regex": "fputs\\s*\\([^;]{0,100}\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "fputs"
+        }
+      ],
+      "condition": "open and (f0 or f1 or f2)"
+    },
+    {
+      "id": "php.variable_function_request",
+      "title": "PHP variable function called with request data",
+      "strings": [
+        {
+          "id": "open",
+          "text": "<?php",
+          "nocase": true
+        },
+        {
+          "id": "f0",
+          "regex": "\\$_GET\\s*\\[[^\\]]{1,40}\\]\\s*\\(\\s*\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "$_GET"
+        },
+        {
+          "id": "f1",
+          "regex": "\\$_POST\\s*\\[[^\\]]{1,40}\\]\\s*\\(\\s*\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "$_POST"
+        },
+        {
+          "id": "f2",
+          "regex": "\\$_REQUEST\\s*\\[[^\\]]{1,40}\\]\\s*\\(\\s*\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "$_REQUEST"
+        },
+        {
+          "id": "f3",
+          "regex": "\\$_COOKIE\\s*\\[[^\\]]{1,40}\\]\\s*\\(\\s*\\$_(GET|POST|REQUEST|COOKIE)",
+          "anchor": "$_COOKIE"
+        }
+      ],
+      "condition": "open and (f0 or f1 or f2 or f3)"
+    },
+    {
+      "id": "php.one_liner",
+      "title": "One-line PHP shell (China Chopper style)",
+      "strings": [
+        {
+          "id": "a",
+          "text": "@eval($_post[",
+          "nocase": true
+        },
+        {
+          "id": "b",
+          "text": "@eval($_request[",
+          "nocase": true
+        },
+        {
+          "id": "c",
+          "text": "@assert($_post[",
+          "nocase": true
+        },
+        {
+          "id": "d",
+          "text": "@eval(base64_decode($_",
+          "nocase": true
+        }
+      ],
+      "condition": "any"
+    },
+    {
+      "id": "asp.eval_request",
+      "title": "Classic ASP that evaluates request data",
+      "strings": [
+        {
+          "id": "a",
+          "text": "eval request(",
+          "nocase": true
+        },
+        {
+          "id": "b",
+          "text": "eval(request(",
+          "nocase": true
+        },
+        {
+          "id": "c",
+          "text": "execute request(",
+          "nocase": true
+        },
+        {
+          "id": "d",
+          "text": "execute(request(",
+          "nocase": true
+        },
+        {
+          "id": "e",
+          "text": "executeglobal(request(",
+          "nocase": true
+        }
+      ],
+      "condition": "(a or b or c or d or e)"
+    },
+    {
+      "id": "aspx.eval_request",
+      "title": "ASP.NET page that evaluates request data",
+      "strings": [
+        {
+          "id": "a",
+          "text": "eval(request.item[",
+          "nocase": true
+        },
+        {
+          "id": "b",
+          "text": "eval(request[",
+          "nocase": true
+        },
+        {
+          "id": "c",
+          "text": "eval(request.form[",
+          "nocase": true
+        }
+      ],
+      "condition": "(a or b or c)"
+    },
+    {
+      "id": "aspx.process_request",
+      "title": "ASP.NET page that starts processes from request data",
+      "strings": [
+        {
+          "id": "start",
+          "text": "process.start(",
+          "nocase": true
+        },
+        {
+          "id": "psi",
+          "text": "processstartinfo",
+          "nocase": true
+        },
+        {
+          "id": "req",
+          "text": "request",
+          "nocase": true
+        },
+        {
+          "id": "cmd",
+          "text": "cmd.exe",
+          "nocase": true
+        }
+      ],
+      "condition": "(start or psi) and req and cmd"
+    },
+    {
+      "id": "jsp.runtime_exec_request",
+      "title": "JSP that runs commands from request parameters",
+      "strings": [
+        {
+          "id": "exec",
+          "text": "Runtime.getRuntime().exec(",
+          "nocase": false
+        },
+        {
+          "id": "pb",
+          "text": "new ProcessBuilder(",
+          "nocase": false
+        },
+        {
+          "id": "param",
+          "text": "request.getParameter(",
+          "nocase": false
+        }
+      ],
+      "condition": "(exec or pb) and param"
+    },
+    {
+      "id": "jsp.class_loader",
+      "title": "JSP that defines classes from request data (memory shell loader)",
+      "strings": [
+        {
+          "id": "define",
+          "text": "defineClass",
+          "nocase": false
+        },
+        {
+          "id": "req",
+          "text": "request",
+          "nocase": false
+        },
+        {
+          "id": "b64a",
+          "text": "Base64",
+          "nocase": false
+        },
+        {
+          "id": "b64b",
+          "text": "BASE64Decoder",
+          "nocase": false
+        },
+        {
+          "id": "cipher",
+          "text": "Cipher.getInstance(",
+          "nocase": false
+        }
+      ],
+      "condition": "define and req and (b64a or b64b or cipher)"
+    },
+    {
+      "id": "python.exec_request",
+      "title": "Python web code that runs commands from request data",
+      "strings": [
+        {
+          "id": "sys",
+          "text": "os.system(",
+          "nocase": false
+        },
+        {
+          "id": "popen",
+          "text": "os.popen(",
+          "nocase": false
+        },
+        {
+          "id": "sub",
+          "text": "subprocess.",
+          "nocase": false
+        },
+        {
+          "id": "args",
+          "text": "request.args",
+          "nocase": false
+        },
+        {
+          "id": "form",
+          "text": "request.form",
+          "nocase": false
+        },
+        {
+          "id": "get",
+          "text": "request.GET",
+          "nocase": false
+        },
+        {
+          "id": "post",
+          "text": "request.POST",
+          "nocase": false
+        }
+      ],
+      "condition": "(sys or popen or sub) and (args or form or get or post)"
+    },
+    {
+      "id": "node.exec_request",
+      "title": "Node.js code that runs commands from request data",
+      "strings": [
+        {
+          "id": "cp",
+          "text": "child_process",
+          "nocase": false
+        },
+        {
+          "id": "q",
+          "text": "req.query",
+          "nocase": false
+        },
+        {
+          "id": "b",
+          "text": "req.body",
+          "nocase": false
+        },
+        {
+          "id": "p",
+          "text": "req.params",
+          "nocase": false
+        }
+      ],
+      "condition": "cp and (q or b or p)"
+    },
+    {
+      "id": "perl.cgi_exec",
+      "title": "Perl CGI that runs commands from parameters",
+      "strings": [
+        {
+          "id": "perl",
+          "text": "#!/usr/bin/perl",
+          "nocase": false
+        },
+        {
+          "id": "param",
+          "text": "param(",
+          "nocase": false
+        },
+        {
+          "id": "sys",
+          "text": "system(",
+          "nocase": false
+        },
+        {
+          "id": "tick",
+          "text": "qx(",
+          "nocase": false
+        }
+      ],
+      "condition": "perl and param and (sys or tick)"
+    },
+    {
+      "id": "shell.reverse_shell",
+      "title": "Reverse shell command",
+      "strings": [
+        {
+          "id": "tcp",
+          "regex": "(sh|bash)\\s+-i\\s*>&\\s*/dev/tcp/",
+          "anchor": "/dev/tcp/"
+        },
+        {
+          "id": "nc",
+          "regex": "nc(at)?[ a-z-]{0,20}-e\\s+/bin/(ba)?sh",
+          "anchor": "/bin/"
+        },
+        {
+          "id": "mkfifo",
+          "regex": "mkfifo\\s+/tmp/[A-Za-z0-9_.]{1,20}\\s*;\\s*(nc|cat)\\s",
+          "anchor": "mkfifo"
+        }
+      ],
+      "condition": "any"
+    }
+  ]
+}

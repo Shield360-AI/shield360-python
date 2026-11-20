@@ -51,6 +51,8 @@ class RaspContext:
     edge: Optional[Dict[str, Any]] = None
     response_headers: List[Tuple[str, str]] = field(default_factory=list)
     verdict_sent: bool = False
+    # SHIELD: uploads — the files this request carries, inspected (_upload.py); never their content.
+    uploads: List[Any] = field(default_factory=list)
 
 
 _current: contextvars.ContextVar[Optional[RaspContext]] = contextvars.ContextVar("shield360_rasp_context", default=None)

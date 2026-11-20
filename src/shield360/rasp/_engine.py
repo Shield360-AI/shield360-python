@@ -251,6 +251,38 @@ def mode_for(attack: str) -> str:
     return m
 
 
+def overridden_mode(attack: str, m: str) -> str:
+    """A mode a route's upload policy or the deep scan chose instead of the
+    attack type's (README "Upload policy and deep scan"): capped by the kill
+    switch, a local ``off`` and no pinned key, like attack modes."""
+    if not is_active() or _state.attacks.get(attack) == "off":
+        return "off"
+    return "monitor" if m == "block" and _state.monitor_only else m
+
+
+def finding_mode(f: Finding) -> str:
+    """The mode that decides a finding, its rule's cap applied."""
+    mode = overridden_mode(f.attack, f.mode) if f.mode in _RANK else mode_for(f.attack)
+    if f.action in _RANK and _RANK[f.action] < _RANK[mode]:
+        mode = f.action
+    return mode
+
+
+def would_block(f: Finding) -> bool:
+    """Whether a finding would be blocked now, without reporting it."""
+    return finding_mode(f) == "block" and f.attack != "xss"
+
+
+def report_record(name: str, attrs: Dict[str, str]) -> None:
+    """Queues a record that is not an attack event (README "Scanner status"). Never raises."""
+    try:
+        out = _state.sink
+        if out is not None:
+            out.add({"name": name, "time": _now_iso(), "attrs": {"shield360.rasp.app": _state.application_name, "shield360.rasp.language": "python", **attrs}}, "")
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+
 def deception_config() -> Optional[Deception]:
     """The decoys in force while RASP is active, or None (README "Deception")."""
     return _state.deception if is_active() else None
@@ -318,6 +350,39 @@ def _safe_method(m: Optional[str]) -> str:
     return m.upper() if isinstance(m, str) and _METHOD.fullmatch(m) else ""
 
 
+_UPLOAD_TYPE = re.compile(r"[a-z0-9_]{1,16}")
+_UPLOAD_SIG = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+
+
+def _upload_attrs(attrs: Dict[str, str], u: Dict[str, Any]) -> None:
+    """README "Upload event attributes": each only when it has the contract's shape."""
+    p = "shield360.rasp.upload."
+    for k in ("type", "kind"):
+        v = u.get(k)
+        if isinstance(v, str) and _UPLOAD_TYPE.fullmatch(v):
+            attrs[p + k] = v
+    ext = u.get("ext")
+    if isinstance(ext, str) and re.fullmatch(r"[a-z0-9]{1,10}", ext):
+        attrs[p + "ext"] = ext
+    size = u.get("size")
+    if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
+        attrs[p + "size"] = str(size)
+    sha = u.get("sha256")
+    if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha):
+        attrs[p + "sha256"] = sha
+    sig = u.get("signature")
+    if isinstance(sig, str) and _UPLOAD_SIG.fullmatch(sig):
+        attrs[p + "signature"] = sig
+    if u.get("engine") in ("builtin", "custom", "clamav", "reputation", "policy"):
+        attrs[p + "engine"] = u["engine"]
+    if u.get("dest"):
+        d = mask_target(u["dest"])
+        if d:
+            attrs[p + "dest"] = d
+    if u.get("action") == "quarantined":
+        attrs[p + "action"] = "quarantined"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -332,10 +397,8 @@ def handle_finding(
 ) -> Optional[str]:
     """Applies a finding: reports it and, when the decision is ``blocked``,
     raises the block error. Returns the decision, or None when the attack type is off."""
-    mode = mode_for(f.attack)
-    # A rule's own action (virtual patches, sink rules) caps the mode.
-    if f.action in _RANK and _RANK[f.action] < _RANK[mode]:
-        mode = f.action
+    # A rule's own action (virtual patches, sink rules) caps the mode; uploads may bring their own mode.
+    mode = finding_mode(f)
     if mode == "off":
         return None
     # SHIELD: protection triangle — a client Edge already marked is blocked for injection-class attacks this app only monitors.
@@ -438,6 +501,8 @@ def _report(
             opt("shield360.rasp.target", mask_target(f.target))
         if f.attack == "sql_injection" and f.dialect in SQL_DIALECTS_REPORTED:
             attrs["shield360.rasp.sql.dialect"] = f.dialect
+        if f.upload and f.attack in ("malicious_upload", "upload_backdoor"):
+            _upload_attrs(attrs, f.upload)
         out = _state.sink
         if out is not None:
             out.add(

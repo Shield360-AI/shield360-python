@@ -611,6 +611,13 @@ What this release covers:
 
 Initialize Shield360 before your app's modules import what they use: a function taken out of its module before that (`from os import system`), or a database connection opened earlier, is not checked. `shield360.rasp.rasp_check(sink, fn)` runs a check at a sink of your own.
 
+### Upload protection
+
+With RASP on, uploaded files are inspected from their bytes when Werkzeug/Flask, Django or Starlette/FastAPI parse a multipart body (real type by magic bytes, web-shell signatures, executables, server scripts, HTML or SVG with script, polyglots, double extensions, `.htaccess`-style config files, zip-slip, links, archive bombs, encrypted archives, Office macros, EICAR), and remembered where the app saves them (`FileStorage.save`, Django temporary files, writes named after the upload, renames, copies and moves). Saving one under an executable name or, when it is active content, into a served directory, importing it (`runpy.run_path`, `importlib.util.spec_from_file_location`), running it, making it executable, or extracting a zip-slip archive is `upload_backdoor`. Events carry the verdict, the real type, the size, the SHA-256 and the matched rule, never the file name or content. `shield360.rasp.inspect_upload(data_or_path, name, content_type)` inspects anything else and raises the block error when the file must be refused.
+
+The per-route upload policy and the deep scan (your own ClamAV, a hash reputation lookup where only the hash leaves the app, your own signatures) are set in Shield360 and reach the app in the signed config; the deep scan runs before the app gets the file. Local options: `rasp={"uploads": {"served_dirs": [...], "max_bytes": ..., "scan_bytes": ..., "quarantine_dir": ..., "deep_scan": {"mode": "block", "clamav": "unix:/var/run/clamav/clamd.ctl"}}}`. See "Uploads" in [`sdk/rasp/README.md`](../rasp/README.md).
+
+
 ## 🛣️ Roadmap
 
 We are dedicated to continuously improving Shield360 SDKs. Here's a look at what's been accomplished and what's on the horizon:

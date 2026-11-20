@@ -20,6 +20,8 @@ ATTACK_TYPES = (
     "xss",
     "virtual_patch",
     "custom_rule",
+    "malicious_upload",
+    "upload_backdoor",
 )
 
 MODES = ("off", "monitor", "block")
@@ -48,6 +50,10 @@ class Finding:
     target: Optional[str] = None
     # SQL findings: the dialect the lexer used.
     dialect: Optional[str] = None
+    # Upload findings: the mode that decides instead of the attack type's (a route's policy, the deep scan).
+    mode: Optional[str] = None
+    # Upload findings: README "Upload event attributes" (type, kind, ext, size, sha256, signature, engine, dest, action).
+    upload: Optional[Dict[str, Any]] = None
 
 
 BLOCK_MESSAGE = "Request blocked by Shield360 runtime protection"
