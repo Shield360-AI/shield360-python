@@ -42,6 +42,7 @@ from opentelemetry.sdk._logs import LoggingHandler
 
 from shield360._masking import mask_text
 from shield360._masking import mask_value as _mask_value
+from shield360.otel.edge_request import EDGE_REQUEST_ID_ATTR, EDGE_TRACE_ID_ATTR, current_edge_ids
 
 _log = logging.getLogger(__name__)
 
@@ -126,8 +127,15 @@ class Shield360LogHandler(LoggingHandler):
         attributes = {
             key: mask_value(key, value)
             for key, value in (log_record.attributes or {}).items()
-            if key != _SENT
+            if key != _SENT and key not in ("shield360_request_id", "shield360_trace_id")
         }
+        # SHIELD: request correlation — Edge's request id, and the trace id when no span carries it
+        # (edge_request.py). Both are id-shaped and are not secrets, so they are not masked.
+        ids = current_edge_ids()
+        if ids["request_id"]:
+            attributes[EDGE_REQUEST_ID_ATTR] = ids["request_id"]
+        if ids["trace_id"] and not ids["span_active"]:
+            attributes[EDGE_TRACE_ID_ATTR] = ids["trace_id"]
         log_record.attributes = attributes
         if isinstance(log_record.body, str):
             log_record.body = mask_text(log_record.body, MAX_BODY_LENGTH)

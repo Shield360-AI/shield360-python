@@ -51,6 +51,9 @@ class RaspContext:
     edge: Optional[Dict[str, Any]] = None
     response_headers: List[Tuple[str, str]] = field(default_factory=list)
     verdict_sent: bool = False
+    # SHIELD: request correlation — the request's X-Request-Id (Edge's id behind Edge) and its traceparent's trace id (otel/edge_request.py).
+    request_id: Optional[str] = None
+    trace_id: Optional[str] = None
     # SHIELD: uploads — the files this request carries, inspected (_upload.py); never their content.
     uploads: List[Any] = field(default_factory=list)
 

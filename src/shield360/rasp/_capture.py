@@ -8,12 +8,15 @@ import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 from urllib.parse import parse_qsl
 
+from opentelemetry import trace
+
 from shield360.rasp._context import RaspContext, VpState, current_context, new_context, reset_context, set_context
 from shield360.rasp._custom_rules import custom_finding, match_request_rules, request_subject
 from shield360.rasp._engine import current_application_name, custom_rules, handle_finding, remote_config, virtual_patches
 from shield360.rasp._normalize import MAX_RAW_BODY, add_input, flatten, parse_cookies
 from shield360.rasp._vpatch import MAX_VP_TEXT, VpRequest, match_virtual_patches
 from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, verify_edge_context
+from shield360.otel.edge_request import REQUEST_ID_HEADER as EDGE_REQUEST_ID_HEADER, request_id_of, tag_server_span, trace_id_of
 
 # Headers the contract treats as input (OpenRASP's headerInjection).
 INPUT_HEADERS = ("user-agent", "referer", "x-forwarded-for")
@@ -115,6 +118,10 @@ def capture_request(
         remote = remote_config()
         keys = remote.edge_keys if remote else []
         ctx.edge = verify_edge_context(keys, edge_value, method, path, _header(headers, REQUEST_ID_HEADER) or None)
+    # SHIELD: request correlation — Edge's request id and the trace for the app's log lines and server span (otel/edge_request.py).
+    ctx.request_id = (ctx.edge or {}).get("rid") or request_id_of(_header(headers, EDGE_REQUEST_ID_HEADER))
+    ctx.trace_id = trace_id_of(_header(headers, "traceparent"))
+    tag_server_span(trace.get_current_span(), ctx.request_id)
     return ctx
 
 
