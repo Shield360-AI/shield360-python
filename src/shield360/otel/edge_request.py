@@ -33,8 +33,8 @@ EDGE_REQUEST_ID_ATTR = "shield360.edge.request_id"
 EDGE_TRACE_ID_ATTR = "shield360.edge.trace_id"
 REQUEST_ID_HEADER = "x-request-id"
 
-_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,128}$")
-_TRACEPARENT = re.compile(r"^[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,128}\Z")
+_TRACEPARENT = re.compile(r"^[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}\Z")
 _MAX_TRACES = 5000
 _by_trace: "OrderedDict[str, str]" = OrderedDict()
 _lock = threading.Lock()
