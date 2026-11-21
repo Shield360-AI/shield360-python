@@ -8,7 +8,7 @@ pylint
 
 # Gen AI
 langchain-core>=1.8.1
-langchain>=1.4.7,<2.0.0
+langchain>=1.4.10,<2.0.0
 langgraph>=1.2.22,<2.0.0
 cohere
 openai
