@@ -30,12 +30,14 @@ def test_context_verifies_and_is_bound():
     assert verify_edge_context(KEYS, context(), "POST", "/api/admin", None, NOW, None) is None
     assert verify_edge_context(KEYS, context(), "GET", "/api/orders", None, NOW, None) is None
     assert verify_edge_context(KEYS, context(), "POST", "/api/orders", "req_other_1234", NOW, None) is None
-    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", None, NOW + 120, None) is None
-    assert verify_edge_context(KEYS, context()[:-3] + "AAA", "POST", "/api/orders", None, NOW, None) is None
-    assert verify_edge_context(KEYS, context(extra=1), "POST", "/api/orders", None, NOW, None) is None
+    # Edge always sends X-Request-Id: without it the context is never trusted.
+    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", None, NOW, None) is None
+    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", "req_0123456789", NOW + 120, None) is None
+    assert verify_edge_context(KEYS, context()[:-3] + "AAA", "POST", "/api/orders", "req_0123456789", NOW, None) is None
+    assert verify_edge_context(KEYS, context(extra=1), "POST", "/api/orders", "req_0123456789", NOW, None) is None
     cache = ReplayCache()
-    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", None, NOW, cache)
-    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", None, NOW, cache) is None
+    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", "req_0123456789", NOW, cache)
+    assert verify_edge_context(KEYS, context(), "POST", "/api/orders", "req_0123456789", NOW, cache) is None
     assert not edge_says_suspect({"ct": "human", "fl": False, "trap": 0, "risk": 10})
 
 
@@ -98,7 +100,7 @@ def _call(header, rid):
         out["status"] = status
         out["headers"] = dict(headers)
 
-    env = {"REQUEST_METHOD": "POST", "PATH_INFO": "/api/orders", "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "REMOTE_ADDR": "198.51.100.7", "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_SHIELD360_REQUEST_ID": rid}
+    env = {"REQUEST_METHOD": "POST", "PATH_INFO": "/api/orders", "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "REMOTE_ADDR": "198.51.100.7", "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_REQUEST_ID": rid}
     b"".join(RaspWSGIMiddleware(_app)(env, start_response))
     return out
 
@@ -173,7 +175,7 @@ def _live_for(method, path, **over):
 
 
 def _edge_headers(rid, header, extra=None):
-    h = {"x-shield360-edge-context": header, "x-shield360-request-id": rid, "x-request-id": rid}
+    h = {"x-shield360-edge-context": header, "x-request-id": rid}
     h.update(extra or {})
     return h
 
@@ -270,7 +272,7 @@ def test_a_request_a_virtual_patch_blocks_still_tells_edge():
         def start_response(status, hs, exc_info=None):
             out["status"], out["headers"] = status, dict(hs)
 
-        env = {"REQUEST_METHOD": shape.method, "PATH_INFO": "/checkout", "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_SHIELD360_REQUEST_ID": rid, "HTTP_X_REQUEST_ID": rid}
+        env = {"REQUEST_METHOD": shape.method, "PATH_INFO": "/checkout", "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_REQUEST_ID": rid}
         env.update({"HTTP_" + k.upper().replace("-", "_"): v for k, v in shape.headers.items()})
         b"".join(RaspWSGIMiddleware(_app)(env, start_response))
         assert out["status"].startswith("403") and _verdict(out["headers"]["X-Shield360-Verdict"])["act"] == "block"
@@ -294,7 +296,7 @@ def test_django_answers_edge_on_the_response_and_on_a_403(monkeypatch):
     monkeypatch.setitem(sys.modules, "django.http", http)
 
     def meta(method, path, rid, header, extra=None):
-        m = {"REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_SHIELD360_REQUEST_ID": rid, "HTTP_X_REQUEST_ID": rid}
+        m = {"REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_REQUEST_ID": rid}
         m.update({"HTTP_" + k.upper().replace("-", "_"): v for k, v in (extra or {}).items()})
         return types.SimpleNamespace(META=m, body=b"")
 

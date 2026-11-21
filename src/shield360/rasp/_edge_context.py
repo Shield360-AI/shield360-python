@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 CONTEXT_HEADER = "x-shield360-edge-context"
 VERDICT_HEADER = "X-Shield360-Verdict"
-REQUEST_ID_HEADER = "x-shield360-request-id"
+# Edge's own request id, which Edge always sends upstream; the signed context's
+# rid must equal it (a context lifted onto another request is refused).
+REQUEST_ID_HEADER = "x-request-id"
 
 _CONTEXT_TTL = 30
 _SKEW = 5
@@ -133,7 +135,8 @@ def verify_edge_context(
         iat, exp = c.get("iat"), c.get("exp")
         if not isinstance(iat, int) or not isinstance(exp, int) or iat > n + _SKEW or exp < n - _SKEW or exp - iat > _CONTEXT_TTL:
             return None
-        if c.get("m") != method or c.get("ph") != path_hash(path) or (request_id and request_id != c["rid"]):
+        # Bound to this request: method, path and Edge's X-Request-Id, which must be present.
+        if c.get("m") != method or c.get("ph") != path_hash(path) or not isinstance(request_id, str) or request_id != c["rid"]:
             return None
         risk, trap = c.get("risk"), c.get("trap")
         if not isinstance(risk, int) or not 0 <= risk <= 100 or not isinstance(trap, int) or not 0 <= trap <= 4:
