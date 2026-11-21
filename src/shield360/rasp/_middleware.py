@@ -161,9 +161,27 @@ def _asgi_target(scope: Mapping[str, Any]) -> Target:
     return path, path.encode("utf-8", "surrogateescape")
 
 
+def _carry_headers(e: RaspBlockedError, ctx: Optional[RaspContext]) -> None:
+    """SHIELD: protection triangle — the verdict RASP set for a request blocked before it reached the app, on its error."""
+    try:
+        if ctx is not None and ctx.response_headers:
+            e.response_headers = list(ctx.response_headers)  # type: ignore[attr-defined]
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+
+def _error_headers(e: RaspBlockedError) -> List[Tuple[str, str]]:
+    """The response headers a block error carries (see ``_carry_headers``)."""
+    h = getattr(e, "response_headers", None)
+    return list(h) if isinstance(h, list) else []
+
+
 def _begin(make: Callable[[], RaspContext], body: Callable[[], Optional[Tuple[Any, Optional[str]]]]):
     """Starts a request context. Returns ``(ctx, None)``, ``(None, error)`` when
-    a virtual patch blocks, or ``(None, None)`` when capture failed (fail open)."""
+    a virtual patch blocks, or ``(None, None)`` when capture failed (fail open).
+    A blocked request's error carries the response headers RASP set for it
+    (the verdict for Edge), for the 403."""
+    ctx: Optional[RaspContext] = None
     try:
         ctx = make()
         run_virtual_patches(ctx)
@@ -173,6 +191,7 @@ def _begin(make: Callable[[], RaspContext], body: Callable[[], Optional[Tuple[An
             run_virtual_patches(ctx)
         return ctx, None
     except RaspBlockedError as e:
+        _carry_headers(e, ctx)
         return None, e
     except Exception:  # pylint: disable=broad-exception-caught
         return None, None
@@ -241,7 +260,7 @@ def _capture_environ(environ: Mapping[str, Any], framework: str, read_body: Call
 
 def _wsgi_blocked(start_response: Callable, e: RaspBlockedError, exc_info: Any = None) -> List[bytes]:
     body = blocked_body_bytes(e)
-    headers = list(_BLOCK_HEADERS) + [("Content-Length", str(len(body)))]
+    headers = list(_BLOCK_HEADERS) + [("Content-Length", str(len(body)))] + _error_headers(e)
     if exc_info is not None:
         start_response("403 Forbidden", headers, exc_info)
     else:
@@ -395,9 +414,15 @@ async def _read_asgi_body(receive: Callable[[], Awaitable[Dict[str, Any]]], mess
             return b"".join(chunks)
 
 
-async def _asgi_blocked(send: Callable, e: RaspBlockedError) -> None:
+def _asgi_headers(headers: Iterable[Tuple[str, str]]) -> List[Tuple[bytes, bytes]]:
+    return [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers]
+
+
+async def _asgi_blocked(send: Callable, e: RaspBlockedError, ctx: Optional[RaspContext] = None) -> None:
     body = blocked_body_bytes(e)
-    headers = [(k.lower().encode(), v.encode()) for k, v in _BLOCK_HEADERS] + [(b"content-length", str(len(body)).encode())]
+    headers = _asgi_headers(_BLOCK_HEADERS) + [(b"content-length", str(len(body)).encode())]
+    # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
+    headers += _asgi_headers(ctx.response_headers if ctx is not None else _error_headers(e))
     await send({"type": "http.response.start", "status": 403, "headers": headers})
     await send({"type": "http.response.body", "body": body})
 
@@ -524,7 +549,7 @@ class RaspASGIMiddleware:
                 capture_body(ctx, b"", ct if isinstance(ct, str) else None)
                 run_virtual_patches(ctx)
         except RaspBlockedError as e:
-            await _asgi_blocked(send, e)
+            await _asgi_blocked(send, e, ctx)
             return
         except Exception:  # pylint: disable=broad-exception-caught
             ctx = None
@@ -544,6 +569,10 @@ class RaspASGIMiddleware:
             if message.get("type") == "http.response.start":
                 state["started"] = True
                 body[0] = _response.begin(_response.content_type_of(message.get("headers") or []))
+                # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
+                if ctx.response_headers:
+                    message = dict(message)
+                    message["headers"] = list(message.get("headers") or []) + _asgi_headers(ctx.response_headers)
             elif message.get("type") == "http.response.body":
                 if body[0] is not None:
                     body[0].add(message.get("body") or b"")
@@ -558,7 +587,7 @@ class RaspASGIMiddleware:
             await self.app(scope, replay, tracked)
         except RaspBlockedError as e:
             if not state["started"]:
-                await _asgi_blocked(send, e)
+                await _asgi_blocked(send, e, ctx)
             elif not state["done"]:
                 await send({"type": "http.response.body", "body": b"", "more_body": False})
         finally:
@@ -641,6 +670,8 @@ def _django_blocked(e: RaspBlockedError) -> Any:
 
     response = JsonResponse(block_body(e), status=403)
     response["Cache-Control"] = "no-store"
+    for k, v in _error_headers(e):
+        response[k] = v
     return response
 
 
@@ -733,6 +764,12 @@ class RaspDjangoMiddleware:
         cv = contextvars.copy_context()
         cv.run(set_context, ctx)
         response = cv.run(self.get_response, request)
+        # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
+        try:
+            for k, v in ctx.response_headers:
+                response[k] = v
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
         if not getattr(response, "streaming", False):
             try:
                 body = cv.run(_response.begin, response.get("Content-Type"))

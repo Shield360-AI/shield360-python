@@ -408,7 +408,7 @@ def handle_finding(
     if tightened:
         mode = "block"
     decision = "blocked" if mode == "block" and f.attack != "xss" else "monitored"
-    event_id = _report(f, sink, decision, mode, framework, route, method, path)
+    event_id = _report(f, sink, decision, mode, framework, route, method, path, tightened)
     _send_verdict(f, decision)
     # Custom rules that look at built-in findings; the first blocking decision wins, the built-in one first.
     custom = None if f.attack == "custom_rule" else _run_finding_rules(f, sink, framework, route, method, path)
@@ -460,6 +460,7 @@ def _report(
     route: Optional[str],
     method: Optional[str],
     path: Optional[str],
+    tightened: bool = False,
 ) -> str:
     """Hands the event to the sink (the reporter folds and rate-limits it). Returns its id. Never raises."""
     event_id = secrets.token_hex(16)
@@ -494,6 +495,8 @@ def _report(
         edge = getattr(ctx, "edge", None) if ctx else None
         if edge:
             attrs["shield360.edge.request_id"] = edge["rid"]
+        if tightened:
+            attrs["shield360.rasp.tightened_by_edge"] = "true"
         opt("shield360.rasp.cve", f.cve if isinstance(f.cve, str) and _CVE.fullmatch(f.cve) else None)
         if remote is not None and remote.snippets and f.input:
             attrs["shield360.rasp.snippet"] = mask_snippet(f.input.value)
