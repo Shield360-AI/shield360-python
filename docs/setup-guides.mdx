@@ -22,34 +22,34 @@ In the app, **Setup → Other ways to connect** (`/setup?tab=guides`) lists the 
 |---|---|
 | [`shield360 run`](https://shield360.ai) | Starts any Node, Python or Java app with Shield360: `shield360 run -- npm start` |
 | [`shield360 init`](https://shield360.ai) | Reads the repository (language, Dockerfiles, Compose, Kubernetes manifests) and sets it up. It never writes the key |
-| [Zero-code setup](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/zero-code-setup.mdx) | What the preload traces in each runtime |
+| [Zero-code setup](https://github.com/Shield360-AI/shield360-python/blob/main/docs/zero-code-setup.mdx) | What the preload traces in each runtime |
 
 ## Shield360 SDKs
 
 | Language | Guide |
 |---|---|
-| Node.js | [Zero-code setup](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/zero-code-setup.mdx): `npm install shield360`, then `node --require shield360/register app.js` |
-| Python | [SDK overview](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/overview.mdx) |
-| .NET | [.NET overview](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/dotnet-overview.mdx) |
-| Go | [Go overview](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/go-overview.mdx) |
+| Node.js | [Zero-code setup](https://github.com/Shield360-AI/shield360-python/blob/main/docs/zero-code-setup.mdx): `npm install shield360`, then `node --require shield360/register app.js` |
+| Python | [SDK overview](https://github.com/Shield360-AI/shield360-python/blob/main/docs/overview.mdx) |
+| .NET | [.NET overview](https://github.com/Shield360-AI/shield360-python/blob/main/docs/dotnet-overview.mdx) |
+| Go | [Go overview](https://github.com/Shield360-AI/shield360-python/blob/main/docs/go-overview.mdx) |
 
-Only the Node.js SDK is in its public registry today. For the others, use `shield360 run` (Python, Java) or [plain OpenTelemetry](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/opentelemetry-any-language.mdx) until their packages are published.
+Only the Node.js SDK is in its public registry today. For the others, use `shield360 run` (Python, Java) or [plain OpenTelemetry](https://github.com/Shield360-AI/shield360-python/blob/main/docs/opentelemetry-any-language.mdx) until their packages are published.
 
 ## Kubernetes
 
-[Kubernetes operator](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/kubernetes-operator.mdx): one `helm install` with `injectNamespaces.<namespace>=<language>` opts whole namespaces in, and the operator adds the SDK to every new pod with no image change. The API key is read from a Secret in each namespace. The chart never takes the key itself.
+[Kubernetes operator](https://github.com/Shield360-AI/shield360-python/blob/main/docs/kubernetes-operator.mdx): one `helm install` with `injectNamespaces.<namespace>=<language>` opts whole namespaces in, and the operator adds the SDK to every new pod with no image change. The API key is read from a Secret in each namespace. The chart never takes the key itself.
 
 ## Any OpenTelemetry language
 
-[OpenTelemetry in any language](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/opentelemetry-any-language.mdx): Java, Ruby, PHP, Rust, Elixir, C++, or any app that exports OTLP (directly or through a Collector). Set the standard `OTEL_EXPORTER_OTLP_*` variables to your Shield360 address and key.
+[OpenTelemetry in any language](https://github.com/Shield360-AI/shield360-python/blob/main/docs/opentelemetry-any-language.mdx): Java, Ruby, PHP, Rust, Elixir, C++, or any app that exports OTLP (directly or through a Collector). Set the standard `OTEL_EXPORTER_OTLP_*` variables to your Shield360 address and key.
 
 ## Serverless
 
 | Platform | Guide |
 |---|---|
-| AWS Lambda | [AWS Lambda](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/aws-lambda.mdx) |
-| Vercel | [Vercel](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/vercel.mdx) |
-| Cloudflare Workers | [Cloudflare Workers](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/cloudflare-workers.mdx) |
+| AWS Lambda | [AWS Lambda](https://github.com/Shield360-AI/shield360-python/blob/main/docs/aws-lambda.mdx) |
+| Vercel | [Vercel](https://github.com/Shield360-AI/shield360-python/blob/main/docs/vercel.mdx) |
+| Cloudflare Workers | [Cloudflare Workers](https://github.com/Shield360-AI/shield360-python/blob/main/docs/cloudflare-workers.mdx) |
 
 ## CI pipelines
 

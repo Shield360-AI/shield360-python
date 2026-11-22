@@ -83,7 +83,7 @@ To set it up in the app itself, or for a production start command:
     | Databases | PostgreSQL (`pg`), MySQL (`mysql2`, `mysql`), MongoDB |
     | Caches | Redis (`redis`, `ioredis`) |
     | APIs and messaging | GraphQL, gRPC, Kafka (`kafkajs`), the AWS SDK |
-    | AI | Every provider and framework in the [integrations](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/overview.mdx) list |
+    | AI | Every provider and framework in the [integrations](https://github.com/Shield360-AI/shield360-python/blob/main/docs/overview.mdx) list |
 
     Values stay out of what is recorded: a Redis command is stored by name only (`GET`, not its key or value), GraphQL field values and MongoDB query values are left out, SQL is recorded without parameters (numbers and quoted strings in a `mysql2` query become `?`), a Kafka message key is stored as `?`, and message payloads are never recorded. Health probes (Kubernetes, load balancers, uptime checks, `/healthz`-style paths) and the SDK's own calls to Shield360 are not traced. Turn one off with `SHIELD360_DISABLED_INSTRUMENTORS`, for example `SHIELD360_DISABLED_INSTRUMENTORS=graphql,kafkajs`.
 
@@ -140,7 +140,7 @@ In Go, three one-line wraps give the same request tracing after `shield360.Init`
 
 ## On Kubernetes
 
-The [Shield360 operator](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/kubernetes-operator.mdx) applies the same entry points to pods by annotation, without changing their images, with runtime protection in monitor mode unless the `Shield360Instrumentation` sets `spec.rasp.mode`.
+The [Shield360 operator](https://github.com/Shield360-AI/shield360-python/blob/main/docs/kubernetes-operator.mdx) applies the same entry points to pods by annotation, without changing their images, with runtime protection in monitor mode unless the `Shield360Instrumentation` sets `spec.rasp.mode`.
 
 To protect every deployment in a namespace, whatever language each one runs, annotate the namespace (operator chart 0.5.0 or later) and restart its deployments:
 
@@ -154,5 +154,5 @@ The operator detects each container's language from its command, image and varia
 ## Next steps
 
 - [Runtime protection](https://shield360.ai)
-- [Kubernetes operator](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/kubernetes-operator.mdx)
-- [SDK configuration](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/configuration.mdx)
+- [Kubernetes operator](https://github.com/Shield360-AI/shield360-python/blob/main/docs/kubernetes-operator.mdx)
+- [SDK configuration](https://github.com/Shield360-AI/shield360-python/blob/main/docs/configuration.mdx)

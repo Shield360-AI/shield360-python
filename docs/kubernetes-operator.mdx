@@ -4,7 +4,7 @@ sidebarTitle: "Kubernetes operator"
 description: "The Shield360 operator adds telemetry and runtime protection to Node.js, Python, .NET and Java pods when they start, chosen by an annotation, without changing their images."
 ---
 
-The Shield360 operator applies [zero-code setup](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/zero-code-setup.mdx) to Kubernetes workloads. It works like the OpenTelemetry Operator's auto-instrumentation.
+The Shield360 operator applies [zero-code setup](https://github.com/Shield360-AI/shield360-python/blob/main/docs/zero-code-setup.mdx) to Kubernetes workloads. It works like the OpenTelemetry Operator's auto-instrumentation.
 
 When a pod is created, a mutating admission webhook checks whether the pod or its namespace opted in. If it did, the webhook:
 
@@ -104,7 +104,7 @@ helm install shield360 oci://ghcr.io/thinkfleetai/charts/shield360-operator \
 
 The chart never takes the API key itself, so the key isn't in rendered manifests or in the Helm release. A namespace or pod annotation still wins over `injectNamespaces`, so one pod opts out with `shield360.ai/inject-nodejs: "false"`. Restart the workloads (`kubectl -n orders rollout restart deployment`) to instrument running pods.
 
-To send the cluster's logs too, add `--set systemLogs.enabled=true` (see [System logs](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/features/system-logs.mdx)). The agent image defaults to the published one. It reuses `shield360.endpoint` and `apiKey.existingSecret`, with the Secret in the release namespace.
+To send the cluster's logs too, add `--set systemLogs.enabled=true` (see [System logs](https://github.com/Shield360-AI/shield360-python/blob/main/docs/features/system-logs.mdx)). The agent image defaults to the published one. It reuses `shield360.endpoint` and `apiKey.existingSecret`, with the Secret in the release namespace.
 
 ## Annotations
 
@@ -119,6 +119,6 @@ Annotations work on a pod or a namespace, and the pod's annotation wins, which i
 
 ## Next steps
 
-- [Zero-code setup](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/zero-code-setup.mdx)
+- [Zero-code setup](https://github.com/Shield360-AI/shield360-python/blob/main/docs/zero-code-setup.mdx)
 - [Runtime protection](https://shield360.ai)
 - [Vulnerabilities (passive IAST)](https://shield360.ai)

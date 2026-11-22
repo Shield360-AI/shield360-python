@@ -215,12 +215,12 @@ export function GET(request: Request) {
 }
 ```
 
-Each request becomes a span, and `tracedFetch` and `span` add child spans. There's no automatic LLM instrumentation, guards or application logs on Edge. Call the model through `tracedFetch` to see its latency and status. See [Cloudflare Workers](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/cloudflare-workers.mdx) for the full API.
+Each request becomes a span, and `tracedFetch` and `span` add child spans. There's no automatic LLM instrumentation, guards or application logs on Edge. Call the model through `tracedFetch` to see its latency and status. See [Cloudflare Workers](https://github.com/Shield360-AI/shield360-python/blob/main/docs/cloudflare-workers.mdx) for the full API.
 
 Edge Middleware (`middleware.ts`) works the same way: wrap the middleware function's work in `withShield360` and pass `waitUntil` from the `event` argument.
 
 ## Next steps
 
-- [AWS Lambda](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/aws-lambda.mdx)
-- [Cloudflare Workers](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/cloudflare-workers.mdx)
-- [SDK configuration](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/configuration.mdx)
+- [AWS Lambda](https://github.com/Shield360-AI/shield360-python/blob/main/docs/aws-lambda.mdx)
+- [Cloudflare Workers](https://github.com/Shield360-AI/shield360-python/blob/main/docs/cloudflare-workers.mdx)
+- [SDK configuration](https://github.com/Shield360-AI/shield360-python/blob/main/docs/configuration.mdx)

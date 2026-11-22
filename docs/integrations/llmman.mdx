@@ -8,7 +8,7 @@ import IntegrationMethods from '/snippets/integration-methods.mdx';
 
 Shield360 uses OpenTelemetry Auto-Instrumentation to help you monitor LLM applications built using models served by [llmman](https://github.com/llmmanorg/llmman). This includes tracking performance, token usage, and how users interact with the application.
 
-llmman is a local model runner that serves the Ollama API (alongside OpenAI- and Anthropic-compatible ones) on port `17434`. There is no dedicated llmman client library: applications talk to it through the Ollama or OpenAI SDKs, so Shield360's existing [Ollama](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/integrations/ollama.mdx) and [OpenAI](https://github.com/ThinkfleetAI/shield360-python/blob/main/docs/integrations/openai.mdx) instrumentations pick it up automatically once the client is pointed at `http://localhost:17434`.
+llmman is a local model runner that serves the Ollama API (alongside OpenAI- and Anthropic-compatible ones) on port `17434`. There is no dedicated llmman client library: applications talk to it through the Ollama or OpenAI SDKs, so Shield360's existing [Ollama](https://github.com/Shield360-AI/shield360-python/blob/main/docs/integrations/ollama.mdx) and [OpenAI](https://github.com/Shield360-AI/shield360-python/blob/main/docs/integrations/openai.mdx) instrumentations pick it up automatically once the client is pointed at `http://localhost:17434`.
 
 The integration is compatible with
 - Ollama Python SDK client `>=0.2.0`
