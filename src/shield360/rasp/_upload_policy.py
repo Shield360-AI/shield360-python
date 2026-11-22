@@ -4,6 +4,7 @@ options, and the policy that applies to a request's route."""
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import tempfile
@@ -60,7 +61,7 @@ def _pos_int(v: Any) -> Optional[int]:
 
 
 def _timeout(v: Any) -> Optional[int]:
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or v in (float("inf"), float("-inf")):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
         return None
     return min(60000, max(100, int(v)))
 
@@ -157,7 +158,18 @@ def local_upload_config(o: Optional[Mapping[str, Any]]) -> UploadConfig:
         "clamav": d.get("clamav"),
         "reputation": d.get("reputation"),
     }
-    return parse_uploads_block({"maxBytes": get("max_bytes", "maxBytes"), "allow": o.get("allow"), "servedDirs": get("served_dirs", "servedDirs"), "deepScan": deep, "routes": o.get("routes")}) or UploadConfig()
+    return (
+        parse_uploads_block(
+            {
+                "maxBytes": get("max_bytes", "maxBytes"),
+                "allow": o.get("allow"),
+                "servedDirs": get("served_dirs", "servedDirs"),
+                "deepScan": deep,
+                "routes": o.get("routes"),
+            }
+        )
+        or UploadConfig()
+    )
 
 
 class _State:  # pylint: disable=too-few-public-methods
@@ -173,7 +185,9 @@ def configure_uploads(o: Optional[Mapping[str, Any]]) -> None:
     sb = (o or {}).get("scan_bytes", (o or {}).get("scanBytes"))
     _State.scan_bytes = min(sb, MAX_SCAN_BYTES) if isinstance(sb, int) and sb > 0 else DEFAULT_SCAN_BYTES
     q = (o or {}).get("quarantine_dir", (o or {}).get("quarantineDir"))
-    _State.quarantine_dir = q if isinstance(q, str) and os.path.isabs(q) else os.path.join(tempfile.gettempdir(), "shield360-quarantine")
+    _State.quarantine_dir = (
+        q if isinstance(q, str) and os.path.isabs(q) else os.path.join(tempfile.gettempdir(), "shield360-quarantine")
+    )
 
 
 def set_remote_uploads(v: Any) -> None:
@@ -212,7 +226,9 @@ def effective_policy(route: Optional[str], c: Optional[UploadConfig] = None) -> 
         timeout_ms=r.get("timeout_ms", c.deep_scan.timeout_ms),
         fail_mode=r.get("fail_mode", c.deep_scan.fail_mode),
     )
-    return EffectivePolicy(allow=r.get("allow", c.allow), max_bytes=r.get("max_bytes", c.max_bytes), mode=r.get("mode"), deep_scan=deep)
+    return EffectivePolicy(
+        allow=r.get("allow", c.allow), max_bytes=r.get("max_bytes", c.max_bytes), mode=r.get("mode"), deep_scan=deep
+    )
 
 
 _SERVED = frozenset(("public", "static", "www", "wwwroot", "htdocs", "webroot", "public_html"))

@@ -363,7 +363,11 @@ def test_wsgi_red_team_left_alone(sink):
         assert status != 429 and "x-shield360-verdict" not in headers
     assert not [e for e in sink.events if e["attrs"]["shield360.rasp.attack"] == "ai_attack_agent"]
     rid = "req_notredteam1"
-    plain = {"user-agent": "Mozilla/5.0", "x-request-id": rid, "x-shield360-edge-context": edge_context("GET", "/api/x", rid, "automation")}
+    plain = {
+        "user-agent": "Mozilla/5.0",
+        "x-request-id": rid,
+        "x-shield360-edge-context": edge_context("GET", "/api/x", rid, "automation"),
+    }
     assert call(mw, "/api/x", plain)[0] == 429
 
 

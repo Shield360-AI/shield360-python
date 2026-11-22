@@ -189,7 +189,9 @@ def _send(engine: str, s: Dict[str, Any], test_id: Optional[str]) -> None:
         "shield360.rasp.scanner.engine": engine,
         "shield360.rasp.scanner.status": s["status"],
         "shield360.rasp.scanner.fail_mode": s["fail_mode"],
-        "shield360.rasp.scanner.since": datetime.fromtimestamp(s["since"], timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "shield360.rasp.scanner.since": datetime.fromtimestamp(s["since"], timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"),
         "shield360.rasp.scanner.failures": str(s["failures"]),
     }
     if test_id:
@@ -202,7 +204,13 @@ def note_engine(engine: str, status: str, fail_mode: str, test_id: Optional[str]
     with _status_lock:
         s = _states.get(engine)
         if s is None or s["status"] != status:
-            s = {"status": status, "since": time.time(), "failures": 0 if status == "ok" else 1, "last_sent": 0.0, "fail_mode": fail_mode}
+            s = {
+                "status": status,
+                "since": time.time(),
+                "failures": 0 if status == "ok" else 1,
+                "last_sent": 0.0,
+                "fail_mode": fail_mode,
+            }
             _states[engine] = s
             send = True
         else:

@@ -364,7 +364,11 @@ class AgentVerifier:
         # A transport given for tests is used for directories too; the default one never follows a redirect.
         self._web_bot_auth = (
             WebBotAuthVerifier(
-                self._audiences, DirectoryCache(http or directory_transport, self._clock), self._signature_replay, self._skew, self._clock
+                self._audiences,
+                DirectoryCache(http or directory_transport, self._clock),
+                self._signature_replay,
+                self._skew,
+                self._clock,
             )
             if web_bot_auth
             else None

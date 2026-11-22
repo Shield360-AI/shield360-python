@@ -161,7 +161,9 @@ def _inspect(sink: str, target_of: Any) -> None:
         # SHIELD: uploads — running an uploaded file (backdoor.exec), in a request or not.
         argv = command_words(str(target["command"])) if "command" in target else [str(a) for a in target.get("argv", [])]  # type: ignore[union-attr]
         backdoor = detect_upload_exec(argv)
-        return strongest(*process_findings(target, inputs, bool(ctx is not None and ctx.in_request), allow_lists()["commands"]), backdoor)
+        return strongest(
+            *process_findings(target, inputs, bool(ctx is not None and ctx.in_request), allow_lists()["commands"]), backdoor
+        )
 
     run_check(sink, run)
 

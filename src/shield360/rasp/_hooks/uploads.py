@@ -40,7 +40,14 @@ def _each_file(files: Any) -> Sequence[tuple]:
     """(field, file) pairs of a Werkzeug/Django MultiDict or a Starlette FormData."""
     out: List[tuple] = []
     try:
-        items = files.multi_items() if hasattr(files, "multi_items") else files.lists() if hasattr(files, "lists") else files.items(multi=True) if hasattr(files, "items") else []
+        if hasattr(files, "multi_items"):
+            items = files.multi_items()
+        elif hasattr(files, "lists"):
+            items = files.lists()
+        elif hasattr(files, "items"):
+            items = files.items(multi=True)
+        else:
+            items = []
         for k, v in items:
             for f in v if isinstance(v, list) else [v]:
                 out.append((str(k), f))
@@ -61,7 +68,9 @@ def _inspect(field: str, f: Any) -> None:
             temp = None
     stream = getattr(f, "stream", None) or getattr(f, "file", None) or f
     try:
-        v = inspect_file_object(field, name if isinstance(name, str) else None, ctype if isinstance(ctype, str) else None, stream, temp)
+        v = inspect_file_object(
+            field, name if isinstance(name, str) else None, ctype if isinstance(ctype, str) else None, stream, temp
+        )
     except RaspBlockedError:
         raise
     except Exception:  # pylint: disable=broad-exception-caught

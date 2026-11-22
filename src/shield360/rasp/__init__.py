@@ -68,14 +68,13 @@ from shield360.rasp._attack_agents import (  # noqa: F401 — AI attack agent AP
     find_callback_domain,
     parse_attack_agents,
 )
-from shield360.rasp._agents import identify_rasp_user  # noqa: F401  pylint: disable=wrong-import-position
+from shield360.rasp._agents import identify_rasp_user  # noqa: F401
 from shield360.rasp._types import RaspDeterredError  # noqa: F401
+from shield360.rasp._upload import inspect_upload
+from shield360.rasp._upload_deep import run_connection_test, set_reputation_client
+from shield360.rasp._upload_policy import configure_uploads, set_remote_uploads, upload_config
 
 logger = logging.getLogger(__name__)
-
-from shield360.rasp._upload import inspect_upload  # noqa: E402
-from shield360.rasp._upload_deep import run_connection_test, set_reputation_client  # noqa: E402
-from shield360.rasp._upload_policy import configure_uploads, set_remote_uploads, upload_config  # noqa: E402
 
 __all__ = [
     "ATTACK_TYPES",

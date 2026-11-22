@@ -1,12 +1,23 @@
 """SHIELD: protection triangle — Edge's context header and the app's verdict
 (the shared wire format; the verdict matches the Go and TypeScript vector)."""
 
+import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import json
+import sys
+import time as _time
+import types
 
+from rasp_corpus import request_for
+from shield360.otel.edge_request import current_edge_ids
+from shield360.rasp import RaspASGIMiddleware, RaspDjangoMiddleware, RaspWSGIMiddleware
 from shield360.rasp._edge_context import ReplayCache, edge_says_suspect, parse_edge_keys, path_hash, sign_verdict, verify_edge_context
+from shield360.rasp._engine import RemoteConfig, configure_engine, handle_finding, set_event_sink, set_remote_config
+from shield360.rasp._types import Finding
+from shield360.rasp._vpatch import BUILT_IN_RULES
 
 KEY = b"0123456789abcdef0123456789abcdef"
 KEYS = [("0a1b2c3d", KEY)]
@@ -18,10 +29,20 @@ def _b64(b):
 
 
 def context(**over):
-    body = {"rid": "req_0123456789", "iat": NOW, "exp": NOW + 30, "m": "POST", "ph": path_hash("/api/orders"), "ct": "suspected_agent", "risk": 80, "trap": 2, "fl": True}
+    body = {
+        "rid": "req_0123456789",
+        "iat": NOW,
+        "exp": NOW + 30,
+        "m": "POST",
+        "ph": path_hash("/api/orders"),
+        "ct": "suspected_agent",
+        "risk": 80,
+        "trap": 2,
+        "fl": True,
+    }
     body.update(over)
     p = _b64(json.dumps(body).encode())
-    return "v1.0a1b2c3d.%s.%s" % (p, _b64(hmac.new(KEY, b"s360-ctx|v1|" + p.encode(), hashlib.sha256).digest()))
+    return f"v1.0a1b2c3d.{p}.{_b64(hmac.new(KEY, b's360-ctx|v1|' + p.encode(), hashlib.sha256).digest())}"
 
 
 def test_context_verifies_and_is_bound():
@@ -43,25 +64,23 @@ def test_context_verifies_and_is_bound():
 
 def test_verdict_matches_the_shared_vector():
     v = sign_verdict(KEYS, "req_0123456789", "block", "sql_injection", "rasp", 600, iat=1800000000)
-    assert v == "v1.0a1b2c3d.eyJyaWQiOiJyZXFfMDEyMzQ1Njc4OSIsImlhdCI6MTgwMDAwMDAwMCwiYWN0IjoiYmxvY2siLCJjYXQiOiJzcWxfaW5qZWN0aW9uIiwic3JjIjoicmFzcCIsInR0bCI6NjAwfQ.oMGW2qT7G2DmQ6YrtxWyfCwzxWUhrAZUAo2cfbf5Nj8"
+    assert (
+        v
+        == "v1.0a1b2c3d."
+        "eyJyaWQiOiJyZXFfMDEyMzQ1Njc4OSIsImlhdCI6MTgwMDAwMDAwMCwiYWN0IjoiYmxvY2siLCJjYXQiOiJzcWxfaW5qZWN0aW9uIiwic3"
+        "JjIjoicmFzcCIsInR0bCI6NjAwfQ"
+        ".oMGW2qT7G2DmQ6YrtxWyfCwzxWUhrAZUAo2cfbf5Nj8"
+    )
     assert sign_verdict(KEYS, "x", "block", "sql_injection") is None
 
 
 def test_keys_parse_strictly():
     assert parse_edge_keys({"keys": [{"kid": "0a1b2c3d", "key": _b64(KEY)}]}) == KEYS
-    assert parse_edge_keys({"keys": [{"kid": "nope", "key": _b64(KEY)}]}) == []
-    assert parse_edge_keys(None) == []
+    assert not parse_edge_keys({"keys": [{"kid": "nope", "key": _b64(KEY)}]})
+    assert not parse_edge_keys(None)
 
 
 # --- RASP with Edge in front (WSGI) ------------------------------------------
-
-import io  # noqa: E402
-import time as _time  # noqa: E402
-
-from shield360.rasp import RaspWSGIMiddleware  # noqa: E402
-from shield360.rasp._edge_context import verify_edge_context as _verify  # noqa: E402,F401
-from shield360.rasp._engine import RemoteConfig, configure_engine, handle_finding, set_event_sink, set_remote_config  # noqa: E402
-from shield360.rasp._types import Finding, RaspBlockedError  # noqa: E402
 
 EVENTS = []
 
@@ -77,18 +96,25 @@ _SEQ = [0]
 def _live(**over):
     now = int(_time.time())
     _SEQ[0] += 1
-    rid = "req_%d_%d" % (now, _SEQ[0])
-    body = {"rid": rid, "iat": now, "exp": now + 30, "m": "POST", "ph": path_hash("/api/orders"), "ct": "suspected_agent", "risk": 80, "trap": 2, "fl": True}
+    rid = f"req_{now}_{_SEQ[0]}"
+    body = {
+        "rid": rid,
+        "iat": now,
+        "exp": now + 30,
+        "m": "POST",
+        "ph": path_hash("/api/orders"),
+        "ct": "suspected_agent",
+        "risk": 80,
+        "trap": 2,
+        "fl": True,
+    }
     body.update(over)
     p = _b64(json.dumps(body).encode())
-    return rid, "v1.0a1b2c3d.%s.%s" % (p, _b64(hmac.new(KEY, b"s360-ctx|v1|" + p.encode(), hashlib.sha256).digest()))
+    return rid, f"v1.0a1b2c3d.{p}.{_b64(hmac.new(KEY, b's360-ctx|v1|' + p.encode(), hashlib.sha256).digest())}"
 
 
 def _app(environ, start_response):
-    try:
-        handle_finding(Finding(attack="sql_injection", rule="sql.tautology"), "sql.query")
-    except RaspBlockedError:
-        raise
+    handle_finding(Finding(attack="sql_injection", rule="sql.tautology"), "sql.query")  # raises the block error
     start_response("200 OK", [("Content-Type", "text/plain")])
     return [b"ok"]
 
@@ -100,7 +126,15 @@ def _call(header, rid):
         out["status"] = status
         out["headers"] = dict(headers)
 
-    env = {"REQUEST_METHOD": "POST", "PATH_INFO": "/api/orders", "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "REMOTE_ADDR": "198.51.100.7", "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_REQUEST_ID": rid}
+    env = {
+        "REQUEST_METHOD": "POST",
+        "PATH_INFO": "/api/orders",
+        "QUERY_STRING": "",
+        "wsgi.input": io.BytesIO(b""),
+        "REMOTE_ADDR": "198.51.100.7",
+        "HTTP_X_SHIELD360_EDGE_CONTEXT": header,
+        "HTTP_X_REQUEST_ID": rid,
+    }
     b"".join(RaspWSGIMiddleware(_app)(env, start_response))
     return out
 
@@ -145,15 +179,6 @@ def test_wsgi_unverified_header_changes_nothing():
 
 # --- RASP with Edge in front (ASGI, Django, a virtual patch) ------------------
 
-import asyncio  # noqa: E402
-import sys  # noqa: E402
-import types  # noqa: E402
-
-from rasp_corpus import request_for  # noqa: E402
-from shield360.otel.edge_request import current_edge_ids  # noqa: E402
-from shield360.rasp import RaspASGIMiddleware, RaspDjangoMiddleware  # noqa: E402
-from shield360.rasp._vpatch import BUILT_IN_RULES  # noqa: E402
-
 _VERDICT_FIELDS = {"rid", "iat", "act", "cat", "src", "ttl"}
 _HEAD_RULE = next(r for r in BUILT_IN_RULES if r.get("example"))
 
@@ -168,7 +193,17 @@ def _live_for(method, path, **over):
     now = int(_time.time())
     _SEQ[0] += 1
     rid = f"req_{now}_{_SEQ[0]}"
-    body = {"rid": rid, "iat": now, "exp": now + 30, "m": method, "ph": path_hash(path), "ct": "suspected_agent", "risk": 80, "trap": 2, "fl": True}
+    body = {
+        "rid": rid,
+        "iat": now,
+        "exp": now + 30,
+        "m": method,
+        "ph": path_hash(path),
+        "ct": "suspected_agent",
+        "risk": 80,
+        "trap": 2,
+        "fl": True,
+    }
     body.update(over)
     p = _b64(json.dumps(body).encode())
     return rid, f"v1.0a1b2c3d.{p}.{_b64(hmac.new(KEY, b's360-ctx|v1|' + p.encode(), hashlib.sha256).digest())}"
@@ -189,7 +224,14 @@ def _asgi(app, method="POST", path="/api/orders", headers=None):
     async def send(message):
         sent.append(message)
 
-    scope = {"type": "http", "method": method, "path": path, "raw_path": path.encode(), "query_string": b"", "headers": [(k.encode(), v.encode()) for k, v in (headers or {}).items()]}
+    scope = {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [(k.encode(), v.encode()) for k, v in (headers or {}).items()],
+    }
     asyncio.run(RaspASGIMiddleware(app)(scope, receive, send))
     start = next(m for m in sent if m["type"] == "http.response.start")
     return start["status"], {k.decode(): v.decode() for k, v in start.get("headers") or []}
@@ -246,7 +288,11 @@ def test_asgi_stamps_edges_request_id_on_what_the_app_logs():
         assert seen["request_id"] == rid
         tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
         _asgi(app, headers={"x-request-id": "3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6", "traceparent": tp})
-        assert seen == {"request_id": "3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6", "trace_id": "0af7651916cd43dd8448eb211c80319c", "span_active": False}
+        assert seen == {
+            "request_id": "3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6",
+            "trace_id": "0af7651916cd43dd8448eb211c80319c",
+            "span_active": False,
+        }
     finally:
         set_event_sink(None)
         configure_engine(enabled=False, application_name="default", env={})
@@ -272,7 +318,14 @@ def test_a_request_a_virtual_patch_blocks_still_tells_edge():
         def start_response(status, hs, exc_info=None):
             out["status"], out["headers"] = status, dict(hs)
 
-        env = {"REQUEST_METHOD": shape.method, "PATH_INFO": "/checkout", "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_REQUEST_ID": rid}
+        env = {
+            "REQUEST_METHOD": shape.method,
+            "PATH_INFO": "/checkout",
+            "QUERY_STRING": "",
+            "wsgi.input": io.BytesIO(b""),
+            "HTTP_X_SHIELD360_EDGE_CONTEXT": header,
+            "HTTP_X_REQUEST_ID": rid,
+        }
         env.update({"HTTP_" + k.upper().replace("-", "_"): v for k, v in shape.headers.items()})
         b"".join(RaspWSGIMiddleware(_app)(env, start_response))
         assert out["status"].startswith("403") and _verdict(out["headers"]["X-Shield360-Verdict"])["act"] == "block"
@@ -296,7 +349,14 @@ def test_django_answers_edge_on_the_response_and_on_a_403(monkeypatch):
     monkeypatch.setitem(sys.modules, "django.http", http)
 
     def meta(method, path, rid, header, extra=None):
-        m = {"REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": "", "wsgi.input": io.BytesIO(b""), "HTTP_X_SHIELD360_EDGE_CONTEXT": header, "HTTP_X_REQUEST_ID": rid}
+        m = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "wsgi.input": io.BytesIO(b""),
+            "HTTP_X_SHIELD360_EDGE_CONTEXT": header,
+            "HTTP_X_REQUEST_ID": rid,
+        }
         m.update({"HTTP_" + k.upper().replace("-", "_"): v for k, v in (extra or {}).items()})
         return types.SimpleNamespace(META=m, body=b"")
 

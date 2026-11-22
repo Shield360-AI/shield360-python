@@ -128,7 +128,9 @@ def detect_upload_include(path: Any) -> Optional[Finding]:
     return _finding("backdoor.include", v, target_directory(resolve_path(path))) if v is not None else None
 
 
-_INTERPRETER = re.compile(r"(sh|bash|zsh|dash|ksh|python[0-9.]*|node|nodejs|perl|php[0-9.]*|ruby|cmd|powershell|pwsh)(\.exe)?", re.IGNORECASE)
+_INTERPRETER = re.compile(
+    r"(sh|bash|zsh|dash|ksh|python[0-9.]*|node|nodejs|perl|php[0-9.]*|ruby|cmd|powershell|pwsh)(\.exe)?", re.IGNORECASE
+)
 
 
 def detect_upload_exec(argv: Sequence[str]) -> Optional[Finding]:

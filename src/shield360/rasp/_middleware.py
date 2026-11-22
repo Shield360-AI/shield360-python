@@ -26,7 +26,7 @@ from shield360.rasp._deception import RULE_HIT, RULE_SUSPICIOUS, decode_target, 
 from shield360.rasp._engine import deception_config, deception_mode, is_active, report_deception
 from shield360.rasp._hooks import response as _response
 from shield360.rasp._normalize import flatten
-from shield360.rasp._types import RaspBlockedError, block_answer, block_body
+from shield360.rasp._types import RaspBlockedError, block_answer
 # SHIELD: AI attack agents — the before-handler check, the scoring, the tripwire and the deter answer (README "AI attack agents").
 from shield360.rasp._agents import agents_after, agents_before, agents_decoy, check_tripwire
 
@@ -95,7 +95,9 @@ Deceived = Union[None, str, RaspBlockedError]
 Target = Tuple[str, Optional[bytes]]
 
 
-def _deceive(framework: str, method: str, target: Callable[[], Target], ip: Optional[str], headers: Optional[Mapping[str, Any]] = None) -> Deceived:
+def _deceive(
+    framework: str, method: str, target: Callable[[], Target], ip: Optional[str], headers: Optional[Mapping[str, Any]] = None
+) -> Deceived:
     """README "Deception": runs before anything else the middleware does.
     ``target`` gives the request path as received (for the event route) and
     its bytes decoded once (None: an invalid escape, which hits nothing).
@@ -300,7 +302,10 @@ def _wsgi_blocked(start_response: Callable, e: RaspBlockedError, exc_info: Any =
 def _wsgi_page(start_response: Callable, page: str) -> List[bytes]:
     """SHIELD: AI attack agents — the decoy 404 with the LLM tripwire page."""
     body = page.encode("utf-8")
-    start_response("404 Not Found", [("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-store"), ("Content-Length", str(len(body)))])
+    start_response(
+        "404 Not Found",
+        [("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-store"), ("Content-Length", str(len(body)))],
+    )
     return [body]
 
 
@@ -568,7 +573,9 @@ class RaspASGIMiddleware:
             await self.app(scope, receive, send)
             return
         method = str(scope.get("method") or "GET").upper()
-        deceived = _deceive(self.framework, method, lambda: _asgi_target(scope), _asgi_client(scope), lower_headers(scope.get("headers") or []))
+        deceived = _deceive(
+            self.framework, method, lambda: _asgi_target(scope), _asgi_client(scope), lower_headers(scope.get("headers") or [])
+        )
         if isinstance(deceived, _TripwirePage):
             await _asgi_text(send, 404, deceived.encode("utf-8"), "text/html; charset=utf-8")
             return
@@ -830,7 +837,12 @@ class RaspDjangoMiddleware:
         # SHIELD: AI attack agents — Django's signed-in user, then the score before the headers are copied.
         try:
             user = getattr(request, "user", None)
-            if ctx.user is None and user is not None and getattr(user, "is_authenticated", False) and getattr(user, "pk", None) is not None:
+            if (
+                ctx.user is None
+                and user is not None
+                and getattr(user, "is_authenticated", False)
+                and getattr(user, "pk", None) is not None
+            ):
                 ctx.user = str(user.pk)[:128]
         except Exception:  # pylint: disable=broad-exception-caught
             pass

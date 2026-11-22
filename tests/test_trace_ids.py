@@ -17,7 +17,7 @@ def _span():
 
 def test_trace_attrs_in_and_out_of_a_span():
     assert not trace_attrs("p.")
-    with trace.use_span(_span()):
+    with trace.use_span(_span()):  # pylint: disable=not-context-manager  # a decorated context manager pylint cannot infer
         assert trace_attrs("p.") == {"p.trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "p.span_id": "00f067aa0ba902b7"}
 
 
@@ -32,7 +32,7 @@ def _event(event_id="a" * 32):
 def test_reporter_attaches_the_trace_and_drops_it_on_a_folded_repeat():
     now = [1000.0]
     r = RaspReporter("https://example.test", "k", "shop", now=lambda: now[0])
-    with trace.use_span(_span()):
+    with trace.use_span(_span()):  # pylint: disable=not-context-manager  # a decorated context manager pylint cannot infer
         r.add(_event(), "k1")
         r.add(_event(), "k1")
     assert r.pending()[0]["attrs"]["shield360.rasp.trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"

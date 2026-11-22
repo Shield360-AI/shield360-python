@@ -122,7 +122,13 @@ _replay = ReplayCache()
 
 
 def verify_edge_context(
-    keys: List[EdgeKey], value: Any, method: str, path: str, request_id: Optional[str] = None, now: Optional[float] = None, cache: Optional[ReplayCache] = _replay
+    keys: List[EdgeKey],
+    value: Any,
+    method: str,
+    path: str,
+    request_id: Optional[str] = None,
+    now: Optional[float] = None,
+    cache: Optional[ReplayCache] = _replay,
 ) -> Optional[Dict[str, Any]]:
     """The verified context for this request, or None."""
     try:
@@ -144,7 +150,9 @@ def verify_edge_context(
         if not isinstance(risk, int) or not 0 <= risk <= 100 or not isinstance(trap, int) or not 0 <= trap <= 4:
             return None
         waf = c.get("waf")
-        if waf is not None and (not isinstance(waf, list) or len(waf) > 16 or not all(isinstance(w, str) and _CAT.match(w) for w in waf)):
+        if waf is not None and (
+            not isinstance(waf, list) or len(waf) > 16 or not all(isinstance(w, str) and _CAT.match(w) for w in waf)
+        ):
             return None
         rt = c.get("rt")
         if rt is not None and (not isinstance(rt, str) or not _RUN.fullmatch(rt)):
@@ -157,15 +165,19 @@ def verify_edge_context(
         return None
 
 
-def sign_verdict(keys: List[EdgeKey], rid: str, act: str, cat: str, src: str = "rasp", ttl: int = 3600, iat: Optional[int] = None) -> Optional[str]:
+def sign_verdict(
+    keys: List[EdgeKey], rid: str, act: str, cat: str, src: str = "rasp", ttl: int = 3600, iat: Optional[int] = None
+) -> Optional[str]:
     """A signed verdict for Edge with the current key, or None."""
     try:
-        if not keys or not _RID.match(rid) or act not in ("block", "flag") or not _CAT.match(cat) or src not in ("rasp", "sdk", "defend") or not 0 <= ttl <= 86400:
+        if not keys or not _RID.match(rid) or not _CAT.match(cat):
+            return None
+        if act not in ("block", "flag") or src not in ("rasp", "sdk", "defend") or not 0 <= ttl <= 86400:
             return None
         kid, secret = keys[0]
         body = {"rid": rid, "iat": int(time.time()) if iat is None else iat, "act": act, "cat": cat, "src": src, "ttl": ttl}
         payload = _b64e(json.dumps(body, separators=(",", ":")).encode("utf-8"))
-        return "v1.%s.%s.%s" % (kid, payload, _b64e(_mac(secret, "s360-verdict|v1|", payload)))
+        return f"v1.{kid}.{payload}.{_b64e(_mac(secret, 's360-verdict|v1|', payload))}"
     except Exception:  # pylint: disable=broad-except
         return None
 
@@ -178,4 +190,8 @@ def edge_red_team(c: Optional[Mapping[str, Any]]) -> Optional[str]:
 
 def edge_says_suspect(c: Optional[Mapping[str, Any]]) -> bool:
     """Edge already marked this client: injection-class attacks tighten from monitor to block."""
-    return bool(c) and c.get("ct") not in ("verified_crawler", "verified_agent") and (c.get("fl") is True or c.get("trap", 0) >= 2 or c.get("risk", 0) >= 70)
+    return (
+        bool(c)
+        and c.get("ct") not in ("verified_crawler", "verified_agent")
+        and (c.get("fl") is True or c.get("trap", 0) >= 2 or c.get("risk", 0) >= 70)
+    )

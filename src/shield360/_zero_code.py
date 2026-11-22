@@ -35,7 +35,7 @@ def start_from_environment(*, swallow_exceptions: bool = True) -> None:
     """
     default_rasp_to_monitor()
     try:
-        import shield360  # pylint: disable=import-outside-toplevel
+        import shield360  # pylint: disable=import-outside-toplevel,cyclic-import  # late: shield360 imports this module
         from shield360.cli.config import build_config_from_environment  # pylint: disable=import-outside-toplevel
 
         if started():

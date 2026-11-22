@@ -287,7 +287,14 @@ def report_record(name: str, attrs: Dict[str, str]) -> None:
     try:
         out = _state.sink
         if out is not None:
-            out.add({"name": name, "time": _now_iso(), "attrs": {"shield360.rasp.app": _state.application_name, "shield360.rasp.language": "python", **attrs}}, "")
+            out.add(
+                {
+                    "name": name,
+                    "time": _now_iso(),
+                    "attrs": {"shield360.rasp.app": _state.application_name, "shield360.rasp.language": "python", **attrs},
+                },
+                "",
+            )
     except Exception:  # pylint: disable=broad-exception-caught
         pass
 
@@ -484,7 +491,17 @@ def handle_finding(
 
 # SHIELD: AI attack agents — findings of these types do not add to the behavior score.
 _AGENT_EXCLUDED = frozenset((ATTACK_AGENT, DECEPTION, "baseline"))
-_TIGHTEN = {"sql_injection", "nosql_injection", "command_injection", "shell_spawn", "code_injection", "path_traversal", "ssrf", "deserialization", "xxe"}
+_TIGHTEN = {
+    "sql_injection",
+    "nosql_injection",
+    "command_injection",
+    "shell_spawn",
+    "code_injection",
+    "path_traversal",
+    "ssrf",
+    "deserialization",
+    "xxe",
+}
 
 
 def _send_verdict(f: Finding, decision: str) -> None:
@@ -497,7 +514,14 @@ def _send_verdict(f: Finding, decision: str) -> None:
             return
         if f.attack == "custom_rule" and decision != "blocked":
             return
-        v = sign_verdict(keys, edge["rid"], "block" if decision == "blocked" else "flag", str(f.attack), "rasp", 3600 if decision == "blocked" else 900)
+        v = sign_verdict(
+            keys,
+            edge["rid"],
+            "block" if decision == "blocked" else "flag",
+            str(f.attack),
+            "rasp",
+            3600 if decision == "blocked" else 900,
+        )
         if v:
             ctx.response_headers.append((VERDICT_HEADER, v))
             ctx.verdict_sent = True

@@ -275,19 +275,34 @@ def test_default_classifier_and_edge_context(tmp_path):
             "method": "GET",
             "path": "/api/x",
             "ip": "203.0.113.11",
-            "headers": {"x-shield360-edge-context": _ctx_header(edge_key, ct="suspected_agent", trap=2, fl=True, rid="req_caught_0001"), "x-request-id": "req_caught_0001"},
+            "headers": {
+                "x-shield360-edge-context": _ctx_header(edge_key, ct="suspected_agent", trap=2, fl=True, rid="req_caught_0001"),
+                "x-request-id": "req_caught_0001",
+            },
         }
     )
     assert caught["decision"] == "deny" and caught["reasons"] == ["trap_hit"]
     # Without Edge's X-Request-Id the context is not trusted.
-    no_id = d.defend({"method": "GET", "path": "/api/x", "ip": "203.0.113.14", "headers": {"x-shield360-edge-context": _ctx_header(edge_key, ct="suspected_agent", trap=2, fl=True, rid="req_noid_00001")}})
+    no_id = d.defend(
+        {
+            "method": "GET",
+            "path": "/api/x",
+            "ip": "203.0.113.14",
+            "headers": {
+                "x-shield360-edge-context": _ctx_header(edge_key, ct="suspected_agent", trap=2, fl=True, rid="req_noid_00001")
+            },
+        }
+    )
     assert no_id["decision"] != "deny" and "trap_hit" not in no_id["reasons"]
     crawler = d.defend(
         {
             "method": "GET",
             "path": "/api/x",
             "ip": "203.0.113.12",
-            "headers": {"x-shield360-edge-context": _ctx_header(edge_key, ct="verified_crawler", trap=3, rid="req_crawler_0001"), "x-request-id": "req_crawler_0001"},
+            "headers": {
+                "x-shield360-edge-context": _ctx_header(edge_key, ct="verified_crawler", trap=3, rid="req_crawler_0001"),
+                "x-request-id": "req_crawler_0001",
+            },
         }
     )
     assert crawler["decision"] == "allow"

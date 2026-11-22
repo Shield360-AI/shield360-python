@@ -7,7 +7,8 @@ import pytest
 
 from shield360.otel.edge_request import request_id_of, trace_id_of
 
-_CORPUS = json.load(open(os.path.join(os.path.dirname(__file__), "..", "..", "rasp", "testdata", "request-correlation.json"), encoding="utf-8"))
+with open(os.path.join(os.path.dirname(__file__), "..", "..", "rasp", "testdata", "request-correlation.json"), encoding="utf-8") as _f:
+    _CORPUS = json.load(_f)
 
 
 @pytest.mark.parametrize("case", _CORPUS["requestId"], ids=lambda c: c["name"])

@@ -36,10 +36,14 @@ def _route(ctx: Optional[RaspContext]) -> Optional[str]:
 
 def _scanner(name: Optional[str], content_type: Optional[str], policy: EffectivePolicy) -> UploadScanner:
     c = upload_config()
-    return UploadScanner(name, content_type, scan_bytes=scan_bytes(), trusted=c.trusted, custom=c.rules if policy.deep_scan.mode != "off" else None)
+    return UploadScanner(
+        name, content_type, scan_bytes=scan_bytes(), trusted=c.trusted, custom=c.rules if policy.deep_scan.mode != "off" else None
+    )
 
 
-def verdict_of_chunks(chunks: Iterable[bytes], name: Optional[str], content_type: Optional[str], policy: EffectivePolicy) -> UploadVerdict:
+def verdict_of_chunks(
+    chunks: Iterable[bytes], name: Optional[str], content_type: Optional[str], policy: EffectivePolicy
+) -> UploadVerdict:
     s = _scanner(name, content_type, policy)
     for c in chunks:
         s.push(c)
@@ -78,7 +82,9 @@ def verdict_of_file(path: str, name: Optional[str], content_type: Optional[str],
         return None
 
 
-def verdict_of_stream(stream: Any, name: Optional[str], content_type: Optional[str], policy: EffectivePolicy) -> Optional[UploadVerdict]:
+def verdict_of_stream(
+    stream: Any, name: Optional[str], content_type: Optional[str], policy: EffectivePolicy
+) -> Optional[UploadVerdict]:
     """A seekable file object, read from its start and put back where it was."""
     try:
         pos = stream.tell()
@@ -114,7 +120,15 @@ def upload_finding(f: UploadFinding, v: UploadVerdict, p: EffectivePolicy, field
         input=RaspInput("", f"body.{field}.filename", "request"),
         mode=mode,
         action="monitor" if f.capped else None,
-        upload={"type": v.type, "kind": v.kind, "ext": v.ext, "size": v.size, "sha256": v.sha256, "signature": f.signature, "engine": f.engine},
+        upload={
+            "type": v.type,
+            "kind": v.kind,
+            "ext": v.ext,
+            "size": v.size,
+            "sha256": v.sha256,
+            "signature": f.signature,
+            "engine": f.engine,
+        },
     )
 
 
@@ -130,7 +144,15 @@ def _decide(ctx: Optional[RaspContext], finding: Finding, sink: str, saved: Opti
         raise
 
 
-def apply_upload(ctx: Optional[RaspContext], field: str, name: Optional[str], content_type: Optional[str], v: UploadVerdict, saved: Optional[str] = None, reported: bool = False) -> None:
+def apply_upload(
+    ctx: Optional[RaspContext],
+    field: str,
+    name: Optional[str],
+    content_type: Optional[str],
+    v: UploadVerdict,
+    saved: Optional[str] = None,
+    reported: bool = False,
+) -> None:
     """Reports what one upload is (the strongest finding), records it on the request, checks its saved location."""
     policy = effective_policy(_route(ctx))
     if reported:
@@ -156,7 +178,9 @@ def deep_scan_on(p: EffectivePolicy) -> bool:
     return p.deep_scan.mode != "off" and bool(p.deep_scan.clamav or p.deep_scan.reputation)
 
 
-def apply_deep_scan(ctx: Optional[RaspContext], field: str, v: UploadVerdict, source: Any, saved: Optional[str] = None, sync: Optional[bool] = None) -> None:
+def apply_deep_scan(
+    ctx: Optional[RaspContext], field: str, v: UploadVerdict, source: Any, saved: Optional[str] = None, sync: Optional[bool] = None
+) -> None:
     """Runs the deep scan and applies it. Sync: raises the block error. Async: a blocking finding quarantines every saved copy."""
     policy = effective_policy(_route(ctx))
     if not deep_scan_on(policy) or (v.sha256 and v.sha256 in upload_config().trusted):
@@ -221,7 +245,9 @@ def _read_all(stream: Any, cap: int = 256 * 1024 * 1024) -> bytes:
         return b""
 
 
-def inspect_file_object(field: str, name: Optional[str], content_type: Optional[str], stream: Any, temp_path: Optional[str] = None) -> Optional[UploadVerdict]:
+def inspect_file_object(
+    field: str, name: Optional[str], content_type: Optional[str], stream: Any, temp_path: Optional[str] = None
+) -> Optional[UploadVerdict]:
     """A parser's file (Werkzeug FileStorage, Django UploadedFile, Starlette
     UploadFile): inspected, the deep scan held (sync) or scheduled. Raises the block error."""
     if not is_active():

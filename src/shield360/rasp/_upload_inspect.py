@@ -360,7 +360,7 @@ class _TarReader:
                 if w["left"] == 0:
                     text = bytes(w["bytes"]).decode("latin-1")
                     if w["kind"] == "L":
-                        self.pending_name = text.split("\x00")[0]
+                        self.pending_name = text.split("\x00", maxsplit=1)[0]
                     else:
                         m = re.search(r"(?:^|\n)\d+ path=([^\n]*)\n", text)
                         if m:
@@ -402,7 +402,11 @@ class _TarReader:
                 self.next = data_start + padded
                 continue
             prefix, base = field_(345, 155), field_(0, 100)
-            name = self.pending_name if self.pending_name is not None else (f"{prefix}/{base}" if prefix and h[257:262] == b"ustar" else base)
+            name = (
+                self.pending_name
+                if self.pending_name is not None
+                else (f"{prefix}/{base}" if prefix and h[257:262] == b"ustar" else base)
+            )
             self.pending_name = None
             self.entries.append(ArchiveEntry(name, typ in ("1", "2"), False, size, size))
             self.next = data_start + padded
@@ -427,7 +431,14 @@ _OLE_NATIVE = _utf16("\x01Ole10Native")
 class UploadScanner:  # pylint: disable=too-many-instance-attributes
     """Inspects a file fed in pieces: ``push`` as the bytes arrive, ``finish`` once."""
 
-    def __init__(self, name: Optional[str] = None, content_type: Optional[str] = None, scan_bytes: Optional[int] = None, custom: Optional[List[Signature]] = None, trusted: Optional[Set[str]] = None):
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        content_type: Optional[str] = None,
+        scan_bytes: Optional[int] = None,
+        custom: Optional[List[Signature]] = None,
+        trusted: Optional[Set[str]] = None,
+    ):
         self.name, self.content_type = name, content_type
         self.scan_bytes = min(scan_bytes, MAX_SCAN_BYTES) if isinstance(scan_bytes, int) and scan_bytes > 0 else DEFAULT_SCAN_BYTES
         self.trusted = trusted or set()
@@ -572,7 +583,12 @@ class UploadScanner:  # pylint: disable=too-many-instance-attributes
             if any(e.symlink for e in entries):
                 add("upload.archive_symlink")
             declared = sum(e.size for e in entries)
-            bomb = total > 10000 or len(entries) > 10000 or declared > 1024 * MIB or any(e.size > 10 * MIB and e.size > 1000 * max(1, e.compressed) for e in entries)
+            bomb = (
+                total > 10000
+                or len(entries) > 10000
+                or declared > 1024 * MIB
+                or any(e.size > 10 * MIB and e.size > 1000 * max(1, e.compressed) for e in entries)
+            )
             if t == "gzip" and len(tail) >= 4 and self.size > 18:
                 isize = struct.unpack_from("<I", tail, len(tail) - 4)[0]
                 bomb = bomb or (isize > 10 * MIB and isize > 1000 * self.size)
@@ -586,7 +602,11 @@ class UploadScanner:  # pylint: disable=too-many-instance-attributes
 
             if any(last(e.name).lower() == "vbaproject.bin" for e in entries) or (t == "ole2" and _OLE_VBA in self.markers):
                 add("upload.office_macro")
-            if any(re.search(r"(^|/)embeddings/oleObject", e.name.replace("\\", "/"), re.I) or re.search(r"(^|/)activeX/", e.name.replace("\\", "/"), re.I) for e in entries) or (t == "ole2" and _OLE_NATIVE in self.markers):
+            if any(
+                re.search(r"(^|/)embeddings/oleObject", e.name.replace("\\", "/"), re.I)
+                or re.search(r"(^|/)activeX/", e.name.replace("\\", "/"), re.I)
+                for e in entries
+            ) or (t == "ole2" and _OLE_NATIVE in self.markers):
                 add("upload.office_ole")
             if any(_ARCHIVE_SCRIPT.search(last(e.name)) for e in entries):
                 add("upload.archive_script")
@@ -603,7 +623,9 @@ def inspect_bytes(data: bytes, name: Optional[str] = None, content_type: Optiona
     return s.finish(True)
 
 
-def inspect_chunks(chunks: Iterable[bytes], name: Optional[str] = None, content_type: Optional[str] = None, **opts: Any) -> UploadVerdict:
+def inspect_chunks(
+    chunks: Iterable[bytes], name: Optional[str] = None, content_type: Optional[str] = None, **opts: Any
+) -> UploadVerdict:
     s = UploadScanner(name, content_type, **opts)
     for c in chunks:
         s.push(c)
@@ -611,7 +633,9 @@ def inspect_chunks(chunks: Iterable[bytes], name: Optional[str] = None, content_
 
 
 def is_active_content(v: UploadVerdict) -> bool:
-    return v.kind in ("script", "html", "svg", "executable") or any(not f.capped and f.rule not in ("upload.too_large", "upload.type_not_allowed") for f in v.findings)
+    return v.kind in ("script", "html", "svg", "executable") or any(
+        not f.capped and f.rule not in ("upload.too_large", "upload.type_not_allowed") for f in v.findings
+    )
 
 
 def is_executable_name(path: str) -> bool:

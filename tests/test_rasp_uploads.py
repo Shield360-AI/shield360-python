@@ -114,7 +114,14 @@ def test_sniff(case):
 
 @pytest.mark.parametrize("case", CORPUS["names"], ids=lambda c: c["name"])
 def test_names(case):
-    got = [r for r, ok in (("upload.server_config", is_server_config_name(case["name"])), ("upload.double_extension", has_double_extension(case["name"]))) if ok]
+    got = [
+        r
+        for r, ok in (
+            ("upload.server_config", is_server_config_name(case["name"])),
+            ("upload.double_extension", has_double_extension(case["name"])),
+        )
+        if ok
+    ]
     assert sorted(got) == sorted(case["rules"])
 
 
@@ -148,7 +155,9 @@ def test_caps_own_rules():
 def test_regex_work_is_bounded():
     import time
 
-    sig = compile_signature({"id": "r", "title": "t", "strings": [{"id": "a", "regex": "(a|aa)*b", "anchor": "aaa"}], "condition": "any"})
+    sig = compile_signature(
+        {"id": "r", "title": "t", "strings": [{"id": "a", "regex": "(a|aa)*b", "anchor": "aaa"}], "condition": "any"}
+    )
     started = time.monotonic()
     assert match_sample([sig], b"a" * (2 * 1024 * 1024)) == []
     assert time.monotonic() - started < 5
@@ -180,14 +189,23 @@ def test_svg():
 def test_archives():
     assert first(zip_bytes([{"name": "../../var/www/html/x.php"}]), "a.zip") == "upload.archive_traversal"
     assert first(zip_bytes([{"name": "link", "symlink": True}]), "a.zip") == "upload.archive_symlink"
-    assert first(zip_bytes([{"name": "big.bin", "data": b"\x00" * 1000, "declared": 4000 * 1024 * 1024}]), "a.zip") == "upload.archive_bomb"
+    assert (
+        first(zip_bytes([{"name": "big.bin", "data": b"\x00" * 1000, "declared": 4000 * 1024 * 1024}]), "a.zip")
+        == "upload.archive_bomb"
+    )
     assert first(zip_bytes([{"name": "secret.txt", "encrypted": True}]), "a.zip") == "upload.archive_encrypted"
     assert first(tar_bytes("../etc/cron.d/x"), "a.tar") == "upload.archive_traversal"
     assert first(tar_bytes("link", tarfile.SYMTYPE), "a.tar") == "upload.archive_symlink"
 
 
 def test_macro_documents():
-    docm = zip_bytes([{"name": "[Content_Types].xml", "data": b"<Types/>"}, {"name": "word/document.xml"}, {"name": "word/vbaProject.bin", "data": b"stub"}])
+    docm = zip_bytes(
+        [
+            {"name": "[Content_Types].xml", "data": b"<Types/>"},
+            {"name": "word/document.xml"},
+            {"name": "word/vbaProject.bin", "data": b"stub"},
+        ]
+    )
     v = inspect_bytes(docm, "report.docx")
     assert (v.type, v.findings[0].rule) == ("docx", "upload.office_macro")
     ole = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 100 + "_VBA_PROJECT".encode("utf-16-le")
@@ -202,7 +220,15 @@ def test_eicar_executables_config_names():
     assert first(PNG, "shell.php.png") == "upload.double_extension"
 
 
-@pytest.mark.parametrize("data,name,ctype", [(PDF, "invoice.pdf", "application/pdf"), (PNG, "photo.png", "image/png"), (JPEG, "me.jpg", "image/jpeg"), (CSV, "data.csv", "text/csv")])
+@pytest.mark.parametrize(
+    "data,name,ctype",
+    [
+        (PDF, "invoice.pdf", "application/pdf"),
+        (PNG, "photo.png", "image/png"),
+        (JPEG, "me.jpg", "image/jpeg"),
+        (CSV, "data.csv", "text/csv"),
+    ],
+)
 def test_benign_files_pass(data, name, ctype):
     v = inspect_bytes(data, name, ctype)
     assert v.findings == []
@@ -310,12 +336,27 @@ def test_uploads_block_bounds():
             "allow": ["image", "nonsense"],
             "servedDirs": ["relative/dir", "/srv/public"],
             "trusted": ["ABC", "a" * 64],
-            "deepScan": {"mode": "block", "scan": "async", "timeoutMs": 999999, "failMode": "closed", "clamav": {"address": "tcp:clamav:3310"}, "reputation": True, "testId": "abcdefgh1"},
+            "deepScan": {
+                "mode": "block",
+                "scan": "async",
+                "timeoutMs": 999999,
+                "failMode": "closed",
+                "clamav": {"address": "tcp:clamav:3310"},
+                "reputation": True,
+                "testId": "abcdefgh1",
+            },
             "routes": [{"route": "no-slash"}, {"route": "/x", "deepScan": "monitor", "timeoutMs": 1}],
         }
     )
     assert c.max_bytes is None and c.allow == ["image"] and c.served_dirs == ["/srv/public"] and c.trusted == {"a" * 64}
-    assert (c.deep_scan.mode, c.deep_scan.scan, c.deep_scan.timeout_ms, c.deep_scan.fail_mode, c.deep_scan.clamav, c.deep_scan.reputation) == ("block", "async", 60000, "closed", ("tcp", "clamav", 3310), True)
+    assert (
+        c.deep_scan.mode,
+        c.deep_scan.scan,
+        c.deep_scan.timeout_ms,
+        c.deep_scan.fail_mode,
+        c.deep_scan.clamav,
+        c.deep_scan.reputation,
+    ) == ("block", "async", 60000, "closed", ("tcp", "clamav", 3310), True)
     assert c.routes == [{"route": "/x", "deep_scan": "monitor", "timeout_ms": 100}]
     assert parse_uploads_block({"deepScan": {"clamav": {"address": "unix:relative"}}}).deep_scan.clamav is None
 
@@ -380,7 +421,11 @@ def test_clamav_hit_blocks_synchronously(clamd):
         inspect_upload(b"anything", "x.txt")
     assert e.value.rule == "upload.malware"
     a = _upload_events(events)[-1]["attrs"]
-    assert (a["shield360.rasp.upload.engine"], a["shield360.rasp.upload.signature"], a["shield360.rasp.sink"]) == ("clamav", "Win.Test.EICAR_HDB-1", "upload.deep_scan")
+    assert (a["shield360.rasp.upload.engine"], a["shield360.rasp.upload.signature"], a["shield360.rasp.sink"]) == (
+        "clamav",
+        "Win.Test.EICAR_HDB-1",
+        "upload.deep_scan",
+    )
 
 
 def test_clean_file_passes(clamd):
@@ -392,7 +437,9 @@ def test_clean_file_passes(clamd):
 
 def test_scanner_down_fail_open(tmp_path):
     events = use_engine("monitor")
-    configure_uploads({"deep_scan": {"mode": "block", "clamav": f"unix:{tmp_path}/missing.sock", "fail_mode": "open", "timeout_ms": 500}})
+    configure_uploads(
+        {"deep_scan": {"mode": "block", "clamav": f"unix:{tmp_path}/missing.sock", "fail_mode": "open", "timeout_ms": 500}}
+    )
     inspect_upload(PNG, "a.png")
     status = [e for e in events if e["name"] == SCANNER_EVENT][0]["attrs"]
     assert (status["shield360.rasp.scanner.status"], status["shield360.rasp.scanner.fail_mode"]) == ("unreachable", "open")
@@ -401,11 +448,15 @@ def test_scanner_down_fail_open(tmp_path):
 
 def test_scanner_down_fail_closed(tmp_path):
     events = use_engine("monitor")
-    configure_uploads({"deep_scan": {"mode": "block", "clamav": f"unix:{tmp_path}/missing.sock", "fail_mode": "closed", "timeout_ms": 500}})
+    configure_uploads(
+        {"deep_scan": {"mode": "block", "clamav": f"unix:{tmp_path}/missing.sock", "fail_mode": "closed", "timeout_ms": 500}}
+    )
     with pytest.raises(RaspBlockedError) as e:
         inspect_upload(PNG, "a.png")
     assert e.value.rule == "upload.scan_unavailable"
-    configure_uploads({"deep_scan": {"mode": "monitor", "clamav": f"unix:{tmp_path}/missing.sock", "fail_mode": "closed", "timeout_ms": 500}})
+    configure_uploads(
+        {"deep_scan": {"mode": "monitor", "clamav": f"unix:{tmp_path}/missing.sock", "fail_mode": "closed", "timeout_ms": 500}}
+    )
     inspect_upload(PNG, "a.png")
     assert _upload_events(events)[-1]["attrs"]["shield360.rasp.decision"] == "monitored"
 
@@ -470,7 +521,11 @@ def test_exec_of_upload_is_blocked(dirs):
     dest = dirs / "private" / "tool"
     _with_upload("tool", b"#!/bin/sh\necho owned\n", lambda: dest.write_bytes(b"#!/bin/sh\necho owned\n"))
     use_engine("monitor", attacks={"upload_backdoor": "block"})
-    for call in (lambda: subprocess.run([str(dest)], check=False), lambda: subprocess.run(["/bin/sh", str(dest)], check=False), lambda: subprocess.run(f'sh "{dest}"', shell=True, check=False)):
+    for call in (
+        lambda: subprocess.run([str(dest)], check=False),
+        lambda: subprocess.run(["/bin/sh", str(dest)], check=False),
+        lambda: subprocess.run(f'sh "{dest}"', shell=True, check=False),
+    ):
         with pytest.raises(RaspBlockedError) as e:
             call()
         assert e.value.rule == "backdoor.exec"

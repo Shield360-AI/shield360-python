@@ -61,7 +61,10 @@ def rules_of():
 def _engine():
     reset_custom_rule_warnings()
     EVENTS.clear()
-    configure_engine(enabled=True, application_name="orders-api", env={})
+    # SHIELD: AI attack agents — off here. Every custom-rule match is a RASP finding (4 points) and the test
+    # requests carry no User-Agent, so five requests from the shared test address cross the behavior threshold
+    # and add an attack_agent.behavior event; test_rasp_attack_agents.py covers the behavior score.
+    configure_engine(enabled=True, application_name="orders-api", attacks={"ai_attack_agent": "off"}, env={})
     set_event_sink(_Sink())
     yield
     set_event_sink(None)
