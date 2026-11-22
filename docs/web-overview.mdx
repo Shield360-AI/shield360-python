@@ -2,7 +2,7 @@
 title: 'Web SDK Overview'
 sidebarTitle: 'Web SDK (browser)'
 icon: 'browser'
-description: 'Real-user monitoring for web apps: page loads, route changes, Core Web Vitals, JavaScript errors and fetch/XHR timing, linked to your backend traces. Private by default.'
+description: 'Real-user monitoring and web analytics for web apps: page loads, route changes, Core Web Vitals, JavaScript errors, fetch/XHR timing, engaged time and section views, linked to your backend traces. Private by default, with consent for visitor identity.'
 ---
 
 The Shield360 Web SDK (`@shield360/web`) measures how your web app performs for the people using it. It runs in their browsers and sends OpenTelemetry (OTLP/JSON) to Shield360 with a public **browser key**. What it records shows under **Telemetry → Browser**.
@@ -20,6 +20,8 @@ The Shield360 Web SDK (`@shield360/web`) measures how your web app performs for 
 | Request | Span `HTTP <METHOD>` (client) | Each `fetch` and `XMLHttpRequest`: method, cleaned URL, status and duration. A failed request or a status of 400 or more is an error |
 | Web Vitals | Log event `browser.web_vital` | LCP, INP, CLS, FCP and TTFB once per page load, with web.dev's rating (good, needs improvement, poor) |
 | JavaScript error | Log event `browser.error` | Uncaught errors and unhandled promise rejections (and errors you report), with type, message and stack trace |
+| Page view summary | Span `browser.page_view` | One per page view, sent when it ends (route change, or the tab hidden or closed): engaged time, deepest scroll and the [sections](#sections) seen |
+| Acquisition | Attributes on `browser.page_load` | The referrer's origin (never its path or query) and the `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` and `utm_content` of the landing URL |
 
 Every record carries a random session id and the page view it belongs to. The resource is marked `shield360.source=browser`, so browser telemetry sits in the same traces and logs tables as your server telemetry and is told apart by that mark.
 
@@ -27,9 +29,9 @@ Every record carries a random session id and the page view it belongs to. The re
 
 The SDK is built so that a page cannot leak what its visitors type or see:
 
-- **No cookies and no fingerprinting.** The session id is random and lives in `sessionStorage` (one tab) or only in memory. The browser is described by coarse families only (Chrome, Safari…; Windows, iOS…; phone or not), never the full user agent, screen or fonts.
+- **No cookies and no fingerprinting without consent.** The session id is random and lives in `sessionStorage` (one tab) or only in memory. The browser is described by coarse families only (Chrome, Safari…; Windows, iOS…; phone or not), never the full user agent, screen or fonts. A persistent visitor id and a fingerprint are used only with the visitor's analytics consent; see [Consent and visitor identity](#consent-and-visitor-identity).
 - **No form values, request or response bodies, or headers.** The SDK never reads the DOM or a body.
-- **No query strings.** Every URL loses its query string, fragment and credentials before it leaves the browser, unless you allow a parameter by name. Path segments that look like ids (numbers, UUIDs, long hex or token-like strings, email addresses) become `:id`, so `/orders/12345` is recorded as `/orders/:id`.
+- **No query strings.** Every URL loses its query string, fragment and credentials before it leaves the browser, unless you allow a parameter by name. The five UTM parameters are read from the landing URL as separate attributes (a value holding an `@` is dropped); nothing else from the query is. Path segments that look like ids (numbers, UUIDs, long hex or token-like strings, email addresses) become `:id`, so `/orders/12345` is recorded as `/orders/:id`.
 - **Error text is cleaned the same way.** URLs inside messages and stacks are cleaned; Shield360 also masks email addresses and long numbers when it stores them.
 - **No session replay.** Recording sessions is not part of this SDK. When it comes, it will be an opt-in under **Settings → Data retention**.
 
@@ -103,15 +105,101 @@ Shield360 enforces the same rules again when the data arrives (see [Browser moni
 | `sampleRate` | `data-sample-rate` | `1` | Share of sessions recorded, 0 to 1 |
 | `sessionStorage` | `data-session="memory"` | `"sessionStorage"` | Where the session id lives |
 | `trackRouteChanges`, `trackRequests`, `trackErrors`, `trackWebVitals` | | `true` | Turn a part off |
+| `trackEngagement` | `data-track-engagement="false"` | `true` | Engaged time, scroll depth and sections (the `browser.page_view` span) |
+| `autoSections` | `data-auto-sections="true"` | `false` | Also treat `<section id>` and `<h2 id>` as sections |
+| `consent` | `data-consent` | `"required"` | When the visitor id and fingerprint may be used: `required`, `notice` or `none` |
+| `consentAdapters` | `data-consent-adapters` (comma-separated) | `[]` | Consent tools to read: `tcf`, `cookiebot`, `onetrust`, or your own function |
+| `fingerprint` | `data-fingerprint="basic"` or `"true"` | `false` | With consent, also send `browser.fingerprint`: `basic` without, `true` with a canvas hash |
 | `debug` | `data-debug="true"` | `false` | Log what the SDK does to the console |
 
 The ingest keeps only the query parameters the browser key allows too, so a parameter must be allowed in both places to be stored.
 
 Other functions:
 
+- `setConsent({ analytics: true | false })` records the visitor's analytics choice from your consent banner. It can be called before `init`; `false` deletes the visitor id at once.
 - `reportError(error)` records an error your code caught.
 - `flush()` sends what is queued now.
 - `shutdown()` stops recording (for tests and hot reloads).
+
+## Sections
+
+Mark the parts of a page you want to know were seen with `data-s360-section`:
+
+```html
+<section data-s360-section="pricing">…</section>
+<div data-s360-section="testimonials">…</div>
+```
+
+With `autoSections: true`, every `<section id="…">` and `<h2 id="…">` counts too, named by its id.
+
+A section counts as viewed once at least half of it, or half the screen for a section taller than that, has been on screen for one second while the visitor is engaged. The SDK records only the section's name, when it was first viewed (milliseconds from the start of the page view) and how long it was on screen while engaged; never its content. Names keep letters, digits, `_`, `.` and `-` (other characters become `_`) and are cut at 40 characters.
+
+**Engaged time** counts only while the tab is visible and the visitor has used the pointer, keyboard, touch or scroll in the last 30 seconds.
+
+Each page view sends one `browser.page_view` span, not one per scroll:
+
+| Attribute | Meaning |
+|---|---|
+| `browser.engagement.time_ms` | Engaged time in the page view |
+| `browser.engagement.scroll_depth_pct` | Deepest point scrolled, as a percentage of the page height |
+| `browser.sections` | Viewed sections in order, `name:first_ms:engaged_ms`, comma-separated; at most 50 |
+| `browser.sections.viewed` | How many sections are in `browser.sections` |
+
+If a hidden tab is shown again, the page view carries on and a later `browser.page_view` span repeats its `browser.page_view.id` with running totals; the last one is complete.
+
+## Consent and visitor identity
+
+The SDK always uses what needs no consent, asks for consent for the rest, and links whatever is available.
+
+<Warning>
+This is not legal advice. In the EU and the UK (GDPR and ePrivacy), a persistent identifier or fingerprint used for analytics needs the visitor's opt-in consent first: use `consent: "required"`. In the US (for example CCPA/CPRA and similar state laws), notice in your privacy policy plus a way to opt out is usually enough, and the Global Privacy Control signal must be honored as an opt-out: `consent: "notice"` does both. Check the rules where your visitors are.
+</Warning>
+
+| `consent` | Visitor id and fingerprint are used |
+|---|---|
+| `required` (default) | Only after a "yes": `setConsent({ analytics: true })` or a consent tool |
+| `notice` | Unless the visitor says no |
+| `none` | Never; `setConsent` and consent tools are ignored |
+
+**Global Privacy Control.** When the browser sends `navigator.globalPrivacyControl = true`, the SDK behaves as if there is no consent, in every mode, and deletes an existing visitor id.
+
+**Consent tools.** `consentAdapters` reads the choice from a consent tool already on your page. The SDK does not include or load these tools, and each adapter does nothing when its tool is missing.
+
+| Adapter | Reads | Analytics allowed when |
+|---|---|---|
+| `tcf` | IAB TCF v2 (`window.__tcfapi`) | Purposes 1 (store information on a device) and 8 (measure content performance) have consent. Ignored where `gdprApplies` is false |
+| `cookiebot` | `window.Cookiebot` | The statistics category is accepted |
+| `onetrust` | `window.OnetrustActiveGroups` | Group `C0002` (Performance) is active |
+
+Your own adapter is a function that calls `update(true | false)` when the choice is known and returns a function that stops listening. Without a consent tool, call `setConsent` from your banner on every page load.
+
+**Withdrawing.** When consent is withdrawn (`setConsent({ analytics: false })`, a "no" from a consent tool, or Global Privacy Control), the `s360_vid` cookie and the localStorage copy are deleted at once.
+
+### What is collected in each mode
+
+| | Without consent | With analytics consent |
+|---|---|---|
+| Page loads, route changes, requests, Web Vitals, errors | Yes | Yes |
+| Engaged time, scroll depth, sections, referrer origin, UTM | Yes | Yes |
+| Session id (random, one tab, `sessionStorage`) | Yes | Yes |
+| Persistent visitor id (`s360_vid` cookie + localStorage) | No | Yes |
+| Browser fingerprint | No | Only with the `fingerprint` option |
+| Form values, bodies, headers, full query strings, session replay | Never | Never |
+
+**The visitor id** is a random UUID in a first-party cookie `s360_vid` (`SameSite=Lax`, `Secure` on https, 13 months, never extended by later visits), mirrored in `localStorage`. If Shield360 Edge already set an `s360_vid` cookie readable by scripts, the SDK adopts it, so Edge and browser records share one id.
+
+**The fingerprint** is a 16-character hash of screen size and color depth, pixel ratio, time zone, languages, CPU count and platform; with `fingerprint: true` a canvas rendering hash is added. It is computed in the browser; only the hash is sent.
+
+### Identity attributes
+
+| Attribute | On | Meaning |
+|---|---|---|
+| `consent.analytics` | Every record | Whether analytics consent applies |
+| `consent.source` | Every record | Where that came from: `default`, `notice`, `none`, `gpc`, `api`, `tcf`, `cookiebot`, `onetrust` or `adapter` |
+| `visitor.id` | Every record, with consent | The persistent visitor id |
+| `browser.fingerprint` | Every record, with consent and the `fingerprint` option | The fingerprint hash |
+| `browser.referrer.origin` | `browser.page_load` | The referrer's origin, when it is another site |
+| `browser.utm.source`, `.medium`, `.campaign`, `.term`, `.content` | `browser.page_load` | The landing URL's UTM parameters (at most 100 characters each) |
 
 ## Link browser requests to backend traces
 
@@ -139,7 +227,7 @@ If your site sets a Content-Security-Policy, add your Shield360 address to `conn
 
 ## Bundle size
 
-The script-tag build is about 7 KB gzipped, with no dependencies.
+The script-tag build is about 11 KB gzipped, with no dependencies.
 
 ## Next steps
 
