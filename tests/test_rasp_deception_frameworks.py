@@ -25,7 +25,8 @@ class _Sink:
 @pytest.fixture(autouse=True)
 def _engine():
     EVENTS.clear()
-    configure_engine(enabled=True, application_name="orders-api", env={})
+    # SHIELD: AI attack agents — off here (decoy hits add to its score); test_rasp_attack_agents.py covers the two together.
+    configure_engine(enabled=True, application_name="orders-api", attacks={"ai_attack_agent": "off"}, env={})
     set_event_sink(_Sink())
     set_suspicious_table(SuspiciousTable())
     # monitor: the client that hit the decoy keeps reaching the app (the comparisons below reuse it).

@@ -26,7 +26,9 @@ from shield360.rasp._deception import RULE_HIT, RULE_SUSPICIOUS, decode_target, 
 from shield360.rasp._engine import deception_config, deception_mode, is_active, report_deception
 from shield360.rasp._hooks import response as _response
 from shield360.rasp._normalize import flatten
-from shield360.rasp._types import RaspBlockedError, block_body
+from shield360.rasp._types import RaspBlockedError, block_answer, block_body
+# SHIELD: AI attack agents — the before-handler check, the scoring, the tripwire and the deter answer (README "AI attack agents").
+from shield360.rasp._agents import agents_after, agents_before, agents_decoy, check_tripwire
 
 MAX_READ = 1024 * 1024
 BODY_METHODS = frozenset(("POST", "PUT", "PATCH", "DELETE"))
@@ -39,7 +41,18 @@ def is_rasp_blocked(e: Any) -> bool:
 
 
 def blocked_body_bytes(e: RaspBlockedError) -> bytes:
-    return json.dumps(block_body(e), separators=(",", ":")).encode()
+    return block_answer(e)[3]
+
+
+class _TripwirePage(str):
+    """SHIELD: AI attack agents — a decoy hit answered with the LLM tripwire page (the page's HTML)."""
+
+
+def _status_code(status: Any) -> int:
+    try:
+        return int(str(status).split(" ", 1)[0])
+    except (TypeError, ValueError):
+        return 0
 
 
 def _outer_captured() -> bool:
@@ -82,12 +95,18 @@ Deceived = Union[None, str, RaspBlockedError]
 Target = Tuple[str, Optional[bytes]]
 
 
-def _deceive(framework: str, method: str, target: Callable[[], Target], ip: Optional[str]) -> Deceived:
+def _deceive(framework: str, method: str, target: Callable[[], Target], ip: Optional[str], headers: Optional[Mapping[str, Any]] = None) -> Deceived:
     """README "Deception": runs before anything else the middleware does.
     ``target`` gives the request path as received (for the event route) and
     its bytes decoded once (None: an invalid escape, which hits nothing).
     Fail open: any error lets the request through."""
     try:
+        # SHIELD: AI attack agents — the tripwire URL is answered first (README "AI attack agents").
+        trip = check_tripwire(framework, method, target()[0], ip)
+        if trip is True:
+            return _HIT
+        if isinstance(trip, RaspBlockedError):
+            return trip
         d = deception_config()
         if d is None:
             return None
@@ -99,7 +118,9 @@ def _deceive(framework: str, method: str, target: Callable[[], Target], ip: Opti
                 return None
             suspicious_table().mark(ip, d.ttl_seconds)
             report_deception(RULE_HIT, mode, framework, method, decoy, path)
-            return _HIT
+            # SHIELD: AI attack agents — a decoy hit adds to the behavior score; the 404 may carry the tripwire page.
+            page = agents_decoy(framework, method, path, ip, headers)
+            return _TripwirePage(page) if page else _HIT
         if not suspicious_table().is_suspicious(ip):
             return None
         mode = deception_mode(d.action)
@@ -176,7 +197,11 @@ def _error_headers(e: RaspBlockedError) -> List[Tuple[str, str]]:
     return list(h) if isinstance(h, list) else []
 
 
-def _begin(make: Callable[[], RaspContext], body: Callable[[], Optional[Tuple[Any, Optional[str]]]]):
+def _begin(
+    make: Callable[[], RaspContext],
+    body: Callable[[], Optional[Tuple[Any, Optional[str]]]],
+    headers: Optional[Mapping[str, Any]] = None,
+):
     """Starts a request context. Returns ``(ctx, None)``, ``(None, error)`` when
     a virtual patch blocks, or ``(None, None)`` when capture failed (fail open).
     A blocked request's error carries the response headers RASP set for it
@@ -189,6 +214,9 @@ def _begin(make: Callable[[], RaspContext], body: Callable[[], Optional[Tuple[An
         if b is not None and b[0] is not None:
             capture_body(ctx, b[0], b[1])
             run_virtual_patches(ctx)
+        # SHIELD: AI attack agents — once the inputs are known: a marked client is deterred here.
+        if headers is not None:
+            agents_before(ctx, headers)
         return ctx, None
     except RaspBlockedError as e:
         _carry_headers(e, ctx)
@@ -255,16 +283,24 @@ def _capture_environ(environ: Mapping[str, Any], framework: str, read_body: Call
     return _begin(
         lambda: capture_request(framework, method, _environ_url(environ), headers, ip=_ip_of(environ.get("REMOTE_ADDR"))),
         body,
+        headers,
     )
 
 
 def _wsgi_blocked(start_response: Callable, e: RaspBlockedError, exc_info: Any = None) -> List[bytes]:
-    body = blocked_body_bytes(e)
-    headers = list(_BLOCK_HEADERS) + [("Content-Length", str(len(body)))] + _error_headers(e)
+    status, reason, base, body = block_answer(e)
+    headers = base + [("Content-Length", str(len(body)))] + _error_headers(e)
     if exc_info is not None:
-        start_response("403 Forbidden", headers, exc_info)
+        start_response(f"{status} {reason}", headers, exc_info)
     else:
-        start_response("403 Forbidden", headers)
+        start_response(f"{status} {reason}", headers)
+    return [body]
+
+
+def _wsgi_page(start_response: Callable, page: str) -> List[bytes]:
+    """SHIELD: AI attack agents — the decoy 404 with the LLM tripwire page."""
+    body = page.encode("utf-8")
+    start_response("404 Not Found", [("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-store"), ("Content-Length", str(len(body)))])
     return [body]
 
 
@@ -356,7 +392,10 @@ class RaspWSGIMiddleware:
             str(environ.get("REQUEST_METHOD") or "GET").upper(),
             lambda: _environ_target(environ),
             _ip_of(environ.get("REMOTE_ADDR")),
+            _environ_headers(environ),
         )
+        if isinstance(deceived, _TripwirePage):
+            return _wsgi_page(start_response, deceived)
         if deceived is _HIT:
             return self.not_found(environ, start_response)
         if isinstance(deceived, RaspBlockedError):
@@ -381,6 +420,8 @@ class RaspWSGIMiddleware:
 
         def start(status: str, headers: Any, *exc_info: Any) -> Any:
             seen["content-type"] = _response.content_type_of(headers)
+            # SHIELD: AI attack agents — scored before the headers go out, so a mark's verdict goes with them.
+            agents_after(ctx, _status_code(status))
             # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
             if ctx.response_headers:
                 headers = list(headers) + list(ctx.response_headers)
@@ -419,11 +460,11 @@ def _asgi_headers(headers: Iterable[Tuple[str, str]]) -> List[Tuple[bytes, bytes
 
 
 async def _asgi_blocked(send: Callable, e: RaspBlockedError, ctx: Optional[RaspContext] = None) -> None:
-    body = blocked_body_bytes(e)
-    headers = _asgi_headers(_BLOCK_HEADERS) + [(b"content-length", str(len(body)).encode())]
+    status, _, base, body = block_answer(e)
+    headers = _asgi_headers(base) + [(b"content-length", str(len(body)).encode())]
     # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
     headers += _asgi_headers(ctx.response_headers if ctx is not None else _error_headers(e))
-    await send({"type": "http.response.start", "status": 403, "headers": headers})
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
 
 
@@ -474,6 +515,13 @@ async def _starlette_not_found(app: Any, scope: Dict[str, Any], receive: Callabl
     return True
 
 
+def _asgi_route(scope: Mapping[str, Any]) -> Optional[str]:
+    """SHIELD: AI attack agents — the route template Starlette or FastAPI matched (``scope["route"].path``), if any."""
+    route = scope.get("route")
+    path = getattr(route, "path", None)
+    return path if isinstance(path, str) and path.startswith("/") else None
+
+
 class RaspASGIMiddleware:
     """Any ASGI app: ``app = RaspASGIMiddleware(app)``.
 
@@ -520,7 +568,10 @@ class RaspASGIMiddleware:
             await self.app(scope, receive, send)
             return
         method = str(scope.get("method") or "GET").upper()
-        deceived = _deceive(self.framework, method, lambda: _asgi_target(scope), _asgi_client(scope))
+        deceived = _deceive(self.framework, method, lambda: _asgi_target(scope), _asgi_client(scope), lower_headers(scope.get("headers") or []))
+        if isinstance(deceived, _TripwirePage):
+            await _asgi_text(send, 404, deceived.encode("utf-8"), "text/html; charset=utf-8")
+            return
         if deceived is _HIT:
             await self._not_found(scope, receive, send)
             return
@@ -548,6 +599,9 @@ class RaspASGIMiddleware:
             elif _no_body(headers, scope.get("http_version")):
                 capture_body(ctx, b"", ct if isinstance(ct, str) else None)
                 run_virtual_patches(ctx)
+            # SHIELD: AI attack agents — the route Starlette matched (it updates the scope), read when the app answers.
+            ctx.route_later = lambda: _asgi_route(scope)
+            agents_before(ctx, headers)
         except RaspBlockedError as e:
             await _asgi_blocked(send, e, ctx)
             return
@@ -568,6 +622,8 @@ class RaspASGIMiddleware:
         async def tracked(message: Dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
                 state["started"] = True
+                # SHIELD: AI attack agents — scored before the headers go out, so a mark's verdict goes with them.
+                agents_after(ctx, message.get("status") or 0)
                 body[0] = _response.begin(_response.content_type_of(message.get("headers") or []))
                 # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
                 if ctx.response_headers:
@@ -600,7 +656,8 @@ _FLASK_PARAM = re.compile(r"<(?:[^:<>]+:)?([^<>]+)>")
 
 
 def _flask_blocked(e: RaspBlockedError):
-    return block_body(e), 403, {"Cache-Control": "no-store"}
+    status, _, headers, body = block_answer(e)
+    return json.loads(body), status, {k: v for k, v in headers if k != "Content-Type"}
 
 
 def _flask_before_request() -> None:
@@ -668,9 +725,9 @@ def rasp_flask(app: Any) -> Any:
 def _django_blocked(e: RaspBlockedError) -> Any:
     from django.http import JsonResponse
 
-    response = JsonResponse(block_body(e), status=403)
-    response["Cache-Control"] = "no-store"
-    for k, v in _error_headers(e):
+    status, _, headers, body = block_answer(e)
+    response = JsonResponse(json.loads(body), status=status)
+    for k, v in headers[1:] + _error_headers(e):
         response[k] = v
     return response
 
@@ -748,7 +805,13 @@ class RaspDjangoMiddleware:
             return self.get_response(request)
         meta = request.META
         method = str(meta.get("REQUEST_METHOD") or "GET").upper()
-        deceived = _deceive("django", method, lambda: _django_target(request), _ip_of(meta.get("REMOTE_ADDR")))
+        deceived = _deceive("django", method, lambda: _django_target(request), _ip_of(meta.get("REMOTE_ADDR")), _environ_headers(meta))
+        if isinstance(deceived, _TripwirePage):
+            from django.http import HttpResponse
+
+            page = HttpResponse(str(deceived), status=404, content_type="text/html; charset=utf-8")
+            page["Cache-Control"] = "no-store"
+            return page
         if deceived is _HIT:
             _django_not_found(request)
         if isinstance(deceived, RaspBlockedError):
@@ -764,6 +827,14 @@ class RaspDjangoMiddleware:
         cv = contextvars.copy_context()
         cv.run(set_context, ctx)
         response = cv.run(self.get_response, request)
+        # SHIELD: AI attack agents — Django's signed-in user, then the score before the headers are copied.
+        try:
+            user = getattr(request, "user", None)
+            if ctx.user is None and user is not None and getattr(user, "is_authenticated", False) and getattr(user, "pk", None) is not None:
+                ctx.user = str(user.pk)[:128]
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+        cv.run(agents_after, ctx, getattr(response, "status_code", 0))
         # SHIELD: protection triangle — the verdict for Edge, when RASP detected something in this request.
         try:
             for k, v in ctx.response_headers:

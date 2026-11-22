@@ -16,7 +16,18 @@ from shield360.rasp._rule_expr import in_cidr, parse_cidr
 DEFEND_JWS_TYPE = "shield360-defend+jws"
 DEFEND_POLICY_PATH = "/api/defend/policy"
 DECISIONS = ("allow", "deny", "challenge", "require_sign_in")
-CLIENT_TYPES = ("human", "verified_agent", "unverified_automation", "suspected_ai_agent")
+CLIENT_TYPES = ("human", "verified_agent", "unverified_automation", "suspected_ai_agent", "ai_attack_agent", "scanner")
+# scanner and ai_attack_agent are subtypes of unverified_automation (sdk/rasp/README.md "AI attack agents").
+_AUTOMATION_SUBTYPES = frozenset(("scanner", "ai_attack_agent"))
+
+
+def client_type_matches(rule_types: Any, client_type: Any) -> bool:
+    """Whether a rule's client types cover a classified client: a rule naming
+    ``unverified_automation`` also matches its subtypes ``scanner`` and
+    ``ai_attack_agent``; a rule naming a subtype matches only it."""
+    if not client_type:
+        return False
+    return client_type in rule_types or (client_type in _AUTOMATION_SUBTYPES and "unverified_automation" in rule_types)
 LIST_TTL_S = 60
 MAX_BUCKETS = 10_000
 MAX_CONTENT_CHARS = 20_000
@@ -282,7 +293,7 @@ def _matches(rule: Dict[str, Any], inp: Dict[str, Any], nets: Optional[list]) ->
         return False
     if "clientTypes" in rule:
         c = inp.get("classification")
-        if not c or c.get("clientType") not in rule["clientTypes"]:
+        if not c or not client_type_matches(rule["clientTypes"], c.get("clientType")):
             return False
     if "attacks" in rule:
         if not ("prompt_injection" in rule["attacks"] and inp["content"]["promptInjection"]):

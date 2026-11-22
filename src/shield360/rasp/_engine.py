@@ -32,6 +32,8 @@ from shield360.rasp._model_output import set_model_output_recording
 from shield360.rasp._types import ATTACK_TYPES, MODES, Finding, RaspBlockedError
 from shield360.rasp._vpatch import BUILT_IN_RULES
 from shield360.rasp._edge_context import VERDICT_HEADER, edge_says_suspect, sign_verdict
+# SHIELD: AI attack agents (README "AI attack agents").
+from shield360.rasp._attack_agents import ATTACK_AGENT, ATTACK_AGENT_SINK, AttackAgentConfig, parse_attack_agents
 
 _RANK = {"off": 0, "monitor": 1, "block": 2}
 
@@ -59,6 +61,8 @@ class RemoteConfig:
     report_targets: bool = False
     # SHIELD: protection triangle — keys for Edge's context header and the app's verdicts (_edge_context.py).
     edge_keys: List[Any] = field(default_factory=list)
+    # SHIELD: AI attack agents — the signed ``attackAgents`` block, read; None = the local option.
+    attack_agents: Optional[AttackAgentConfig] = None
 
 
 def _empty_allow() -> Dict[str, List[str]]:
@@ -83,6 +87,8 @@ class _State:
     deception: Optional[Deception] = None
     application_name: str = "default"
     sink: Any = None
+    # SHIELD: AI attack agents — the local ``attack_agents`` option.
+    attack_agents: AttackAgentConfig = field(default_factory=lambda: parse_attack_agents(None))
 
 
 _state = _State()
@@ -136,6 +142,7 @@ def configure_engine(
     monitor_only: bool = False,
     env: Optional[Mapping[str, str]] = None,
     rules_time_budget_ms: Any = None,
+    attack_agents: Any = None,
 ) -> None:
     """Applies the local options. ``allow`` takes ``commands``,
     ``outbound_hosts`` and ``file_roots`` (the contract's camelCase names work too).
@@ -154,6 +161,7 @@ def configure_engine(
         _state.application_name = application_name or "default"
         _state.mode = as_mode(mode) or (e if e in ("block", "monitor") else "monitor")
         _state.attacks = _clean_attacks(attacks)
+        _state.attack_agents = parse_attack_agents(attack_agents)
         _state.allow = {
             "commands": _strings(_allow_value(allow, "commands", "commands")) or [],
             "outbound_hosts": _strings(_allow_value(allow, "outbound_hosts", "outboundHosts")) or [],
@@ -202,6 +210,7 @@ def set_remote_config(c: Optional[RemoteConfig]) -> None:
         custom_rules=c.custom_rules if isinstance(c.custom_rules, list) else None,
         deception=c.deception,
         edge_keys=list(getattr(c, "edge_keys", None) or []),
+        attack_agents=c.attack_agents if isinstance(c.attack_agents, AttackAgentConfig) else None,
     )
     _state.custom_rules = parse_custom_rules(c.custom_rules, _state.application_name)
     _state.deception = parse_deception(c.deception)
@@ -280,6 +289,55 @@ def report_record(name: str, attrs: Dict[str, str]) -> None:
         if out is not None:
             out.add({"name": name, "time": _now_iso(), "attrs": {"shield360.rasp.app": _state.application_name, "shield360.rasp.language": "python", **attrs}}, "")
     except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+
+def attack_agent_config() -> AttackAgentConfig:
+    """SHIELD: AI attack agents — the settings in force: the signed config's block, else the local option."""
+    r = _state.remote
+    return r.attack_agents if r is not None and r.attack_agents is not None else _state.attack_agents
+
+
+def report_attack_agent(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rule: str,
+    block: bool,
+    mark: Dict[str, str],
+    framework: Optional[str],
+    method: Optional[str],
+    route: Optional[str],
+    path: Optional[str],
+) -> str:
+    """SHIELD: AI attack agents — reports a mark or a marked client's request
+    (attack ``ai_attack_agent``, sink ``http.attack_agent``, no input) with the
+    client kind and reason; returns its event id. Never raises."""
+    mode = "block" if block else "monitor"
+    return _report(
+        Finding(attack=ATTACK_AGENT, rule=rule),
+        ATTACK_AGENT_SINK,
+        "blocked" if block else "monitored",
+        mode,
+        framework,
+        route,
+        method,
+        path,
+        agent=(mark["kind"], mark["reason"]),
+    )
+
+
+def send_agent_verdict(ctx: Any, kind: str, ttl_seconds: int) -> None:
+    """SHIELD: AI attack agents — a signed block verdict for Edge with the
+    client kind and the mark's TTL; replaces a flag verdict set earlier in the
+    request. Needs a verified Edge context. Never raises."""
+    try:
+        edge = getattr(ctx, "edge", None) if ctx else None
+        keys = _state.remote.edge_keys if _state.remote else []
+        if not edge or not keys:
+            return
+        v = sign_verdict(keys, edge["rid"], "block", kind, "rasp", ttl_seconds)
+        if v:
+            ctx.response_headers[:] = [h for h in ctx.response_headers if h[0] != VERDICT_HEADER] + [(VERDICT_HEADER, v)]
+            ctx.verdict_sent = True
+    except Exception:  # pylint: disable=broad-except
         pass
 
 
@@ -408,6 +466,11 @@ def handle_finding(
     if tightened:
         mode = "block"
     decision = "blocked" if mode == "block" and f.attack != "xss" else "monitored"
+    # SHIELD: AI attack agents — a finding feeds the client's behavior score; a block's 403 is never an auth failure.
+    if ctx is not None and f.attack not in _AGENT_EXCLUDED:
+        ctx.agent_finding = True
+    if ctx is not None and decision == "blocked":
+        ctx.own_block = True
     event_id = _report(f, sink, decision, mode, framework, route, method, path, tightened)
     _send_verdict(f, decision)
     # Custom rules that look at built-in findings; the first blocking decision wins, the built-in one first.
@@ -419,6 +482,8 @@ def handle_finding(
     return decision
 
 
+# SHIELD: AI attack agents — findings of these types do not add to the behavior score.
+_AGENT_EXCLUDED = frozenset((ATTACK_AGENT, DECEPTION, "baseline"))
 _TIGHTEN = {"sql_injection", "nosql_injection", "command_injection", "shell_spawn", "code_injection", "path_traversal", "ssrf", "deserialization", "xxe"}
 
 
@@ -461,6 +526,7 @@ def _report(
     method: Optional[str],
     path: Optional[str],
     tightened: bool = False,
+    agent: Optional[Any] = None,
 ) -> str:
     """Hands the event to the sink (the reporter folds and rate-limits it). Returns its id. Never raises."""
     event_id = secrets.token_hex(16)
@@ -506,6 +572,10 @@ def _report(
             attrs["shield360.rasp.sql.dialect"] = f.dialect
         if f.upload and f.attack in ("malicious_upload", "upload_backdoor"):
             _upload_attrs(attrs, f.upload)
+        # SHIELD: AI attack agents — the client kind and the reason it was marked.
+        if agent and f.attack == ATTACK_AGENT:
+            attrs["shield360.rasp.client_kind"] = agent[0]
+            attrs["shield360.rasp.reason"] = agent[1]
         out = _state.sink
         if out is not None:
             out.add(

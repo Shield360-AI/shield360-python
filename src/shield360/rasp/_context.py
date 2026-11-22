@@ -56,6 +56,17 @@ class RaspContext:
     trace_id: Optional[str] = None
     # SHIELD: uploads — the files this request carries, inspected (_upload.py); never their content.
     uploads: List[Any] = field(default_factory=list)
+    # SHIELD: AI attack agents (_attack_agents.py) — the signed-in user the app named, whether a RASP
+    # finding happened, whether Shield360 answered itself (never scored), the check/scoring state,
+    # the headers for scoring, the matched route read when the app answers, and Edge's verification.
+    user: Optional[str] = None
+    agent_finding: bool = False
+    own_block: bool = False
+    agents_checked: bool = False
+    agents_scored: bool = False
+    agent_headers: Any = None
+    route_later: Optional[Callable[[], Optional[str]]] = None
+    agent_verified: bool = False
 
 
 _current: contextvars.ContextVar[Optional[RaspContext]] = contextvars.ContextVar("shield360_rasp_context", default=None)

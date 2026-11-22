@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-20",
+  "version": "2026-11-21",
   "aiAgents": [
     { "id": "chatgpt-user", "match": "chatgpt-user" },
     { "id": "chatgpt-agent", "match": "chatgpt agent" },
@@ -73,5 +73,39 @@
     { "id": "selenium", "match": "selenium" },
     { "id": "phantomjs", "match": "phantomjs" },
     { "id": "electron", "match": "electron/" }
+  ],
+  "attackTools": [
+    { "id": "sqlmap", "match": "sqlmap" },
+    { "id": "nuclei", "match": "nuclei" },
+    { "id": "ffuf", "match": "fuzz faster u fool" },
+    { "id": "ffuf-short", "match": "ffuf/" },
+    { "id": "projectdiscovery", "match": "projectdiscovery" },
+    { "id": "katana", "match": "katana/" },
+    { "id": "dalfox", "match": "dalfox" },
+    { "id": "bbot", "match": "bbot/" },
+    { "id": "nikto", "match": "nikto" },
+    { "id": "wpscan", "match": "wpscan" },
+    { "id": "feroxbuster", "match": "feroxbuster" },
+    { "id": "gobuster", "match": "gobuster" },
+    { "id": "dirbuster", "match": "dirbuster" },
+    { "id": "dirsearch", "match": "dirsearch" },
+    { "id": "wfuzz", "match": "wfuzz" },
+    { "id": "commix", "match": "commix" },
+    { "id": "xsstrike", "match": "xsstrike" },
+    { "id": "jaeles", "match": "jaeles" },
+    { "id": "interactsh", "match": "interactsh" },
+    { "id": "acunetix", "match": "acunetix" },
+    { "id": "netsparker", "match": "netsparker" },
+    { "id": "nessus", "match": "nessus" },
+    { "id": "openvas", "match": "openvas" },
+    { "id": "arachni", "match": "arachni" },
+    { "id": "w3af", "match": "w3af" },
+    { "id": "hydra", "match": "(hydra)" },
+    { "id": "zgrab", "match": "zgrab" },
+    { "id": "masscan", "match": "masscan" }
+  ],
+  "attackAgentHeaders": [
+    { "id": "artex-replay", "match": "x-artex-replay-nonce" },
+    { "id": "artex", "match": "x-artex-" }
   ]
 }

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 ATTACK_TYPES = (
     "sql_injection",
@@ -22,6 +23,8 @@ ATTACK_TYPES = (
     "custom_rule",
     "malicious_upload",
     "upload_backdoor",
+    # SHIELD: AI attack agents (README "AI attack agents").
+    "ai_attack_agent",
 )
 
 MODES = ("off", "monitor", "block")
@@ -80,3 +83,29 @@ class RaspBlockedError(Exception):
 def block_body(e: RaspBlockedError) -> Dict[str, Any]:
     """The JSON body of the 403 (README "The block response")."""
     return {"error": BLOCK_MESSAGE, "attack": e.attack, "rule": e.rule, "event": e.event_id}
+
+
+class RaspDeterredError(RaspBlockedError):
+    """The deter answer (README "AI attack agents"): a marked attack agent in
+    block mode gets 429 with Retry-After instead of the 403, so agents that
+    honor rate limits give up. Middleware maps it like the block error."""
+
+    status = 429
+    status_code = 429
+    code = 429
+
+    def __init__(self, rule: str, event_id: str, retry_after: int):
+        super().__init__("ai_attack_agent", rule, event_id)
+        self.retry_after = retry_after
+
+
+DETER_MESSAGE = "Too Many Requests"
+
+
+def block_answer(e: RaspBlockedError) -> Tuple[int, str, List[Tuple[str, str]], bytes]:
+    """The status, reason, headers and body a block (403) or deter (429) answers with."""
+    headers = [("Content-Type", "application/json"), ("Cache-Control", "no-store")]
+    if isinstance(e, RaspDeterredError):
+        body = json.dumps({"error": DETER_MESSAGE}, separators=(",", ":")).encode()
+        return 429, "Too Many Requests", headers + [("Retry-After", str(e.retry_after))], body
+    return 403, "Forbidden", headers, json.dumps(block_body(e), separators=(",", ":")).encode()

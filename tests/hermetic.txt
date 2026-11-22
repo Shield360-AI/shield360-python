@@ -56,6 +56,7 @@ tests/test_rasp_db_enterprise.py
 tests/test_rasp_db_hook.py
 tests/test_rasp_deception.py
 tests/test_rasp_deception_frameworks.py
+tests/test_rasp_attack_agents.py
 tests/test_rasp_detect.py
 tests/test_rasp_file_hook.py
 tests/test_rasp_hook_contracts.py

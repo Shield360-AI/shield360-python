@@ -61,6 +61,15 @@ from shield360.rasp._rule_expr import RULE_EXPR_LIMITS, RULE_FIELDS, compile_rul
 from shield360.rasp._sinks import BUILT_IN_SINKS, parse_sink_rule, parse_sink_rules, set_sink_rules
 from shield360.rasp._types import ATTACK_TYPES, BLOCK_MESSAGE, Finding, RaspBlockedError, RaspInput, block_body
 from shield360.rasp._edge_context import parse_edge_keys, sign_verdict, verify_edge_context  # noqa: F401 — protection triangle API
+# SHIELD: AI attack agents (README "AI attack agents").
+from shield360.rasp._attack_agents import (  # noqa: F401 — AI attack agent API
+    attack_fingerprint,
+    client_key as attack_client_key,
+    find_callback_domain,
+    parse_attack_agents,
+)
+from shield360.rasp._agents import identify_rasp_user  # noqa: F401  pylint: disable=wrong-import-position
+from shield360.rasp._types import RaspDeterredError  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +79,12 @@ from shield360.rasp._upload_policy import configure_uploads, set_remote_uploads,
 
 __all__ = [
     "ATTACK_TYPES",
+    "RaspDeterredError",
+    "identify_rasp_user",
+    "parse_attack_agents",
+    "attack_fingerprint",
+    "find_callback_domain",
+    "attack_client_key",
     "inspect_upload",
     "BLOCK_MESSAGE",
     "RULE_EXPR_LIMITS",
@@ -186,6 +201,8 @@ def _to_remote(c: Dict[str, Any]) -> RemoteConfig:
         deception=c.get("deception"),
         # SHIELD: protection triangle — the environment's Edge context keys.
         edge_keys=parse_edge_keys(c.get("edgeContext")),
+        # SHIELD: AI attack agents — absent or not an object: the local option.
+        attack_agents=parse_attack_agents(c["attackAgents"]) if isinstance(c.get("attackAgents"), dict) else None,
     )
 
 
@@ -276,6 +293,7 @@ def init_rasp(
             monitor_only=unpinned,
             env=env,
             rules_time_budget_ms=o.get("rules_time_budget_ms"),
+            attack_agents=o.get("attack_agents"),
         )
         set_sink_rules(BUILT_IN_SINKS)
         configure_iast(o.get("iast"), application_name=application_name, environment=environment, env=env)

@@ -16,7 +16,7 @@ from typing import Any, Dict, Mapping, Optional
 
 __all__ = ["classify_client", "CLIENT_TYPES", "BREADTH_AGENT", "SIGNATURES_VERSION", "BreadthCounter"]
 
-CLIENT_TYPES = ("human", "verified_agent", "unverified_automation", "suspected_ai_agent")
+CLIENT_TYPES = ("human", "verified_agent", "unverified_automation", "suspected_ai_agent", "ai_attack_agent", "scanner")
 BREADTH_AGENT = 30
 
 with open(os.path.join(os.path.dirname(__file__), "signatures.json"), "rb") as _f:
@@ -27,6 +27,19 @@ _CHROME = re.compile(r"chrome/\d")
 
 def _find(ua: str, group: str) -> Optional[Dict[str, str]]:
     return next((s for s in _S[group] if s["match"] in ua), None)
+
+
+def _agent_header(headers: Mapping[str, str]) -> Optional[Dict[str, str]]:
+    """The first attack agent header entry a request carries: a header named ``match``, or starting with it when it ends in ``-``."""
+    names = [str(k).lower() for k in headers]
+    return next(
+        (
+            s
+            for s in _S["attackAgentHeaders"]
+            if any(n == s["match"] or (s["match"].endswith("-") and n.startswith(s["match"])) for n in names)
+        ),
+        None,
+    )
 
 
 def _out(client_type: str, reasons: list, confidence: str) -> Dict[str, Any]:
@@ -44,6 +57,17 @@ def classify_client(
         return _out("verified_agent", ["agent_verified"], "high")
     if edge.get("ct") in ("verified_agent", "verified_crawler"):
         return _out("verified_agent", [f"edge:{edge['ct']}"], "high")
+    # An attack agent's own header, a RASP mark, then an attack tool's User-Agent (tool-only evidence stays ``scanner``).
+    header = _agent_header(headers)
+    if header:
+        return _out("ai_attack_agent", [f"attack_agent_header:{header['id']}"], "high")
+    if sig.get("attackMark") == "ai_attack_agent":
+        return _out("ai_attack_agent", ["attack_mark:ai_attack_agent"], "high")
+    tool = _find(ua, "attackTools") if ua else None
+    if tool:
+        return _out("scanner", [f"ua_attack_tool:{tool['id']}"], "high")
+    if sig.get("attackMark") == "scanner":
+        return _out("scanner", ["attack_mark:scanner"], "high")
     if sig.get("trapHit"):
         return _out("suspected_ai_agent", ["trap_hit"], "high")
     if (edge.get("trap") or 0) >= 2:

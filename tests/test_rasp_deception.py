@@ -73,7 +73,8 @@ DECOYS = {"paths": ["/wp-admin", "/.env"], "action": "block", "ttlSeconds": 60}
 @pytest.fixture(autouse=True)
 def _engine():
     EVENTS.clear()
-    configure_engine(enabled=True, application_name="orders-api", env={})
+    # SHIELD: AI attack agents — off here (decoy hits add to its score); test_rasp_attack_agents.py covers the two together.
+    configure_engine(enabled=True, application_name="orders-api", attacks={"ai_attack_agent": "off"}, env={})
     set_event_sink(_Sink())
     clock = Clock()
     set_suspicious_table(SuspiciousTable(clock=clock))

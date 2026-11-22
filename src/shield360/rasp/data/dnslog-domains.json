@@ -7,5 +7,9 @@
     ".canarytokens.com", ".interact.sh", ".oast.fun", ".oast.pro", ".oast.live", ".oast.site", ".oast.online", ".oast.me",
     ".requestbin.net", ".requestcatcher.com", ".webhook.site"
   ],
-  "hosts": ["requestb.in", "transfer.sh", "webhook.site"]
+  "hosts": ["requestb.in", "transfer.sh", "webhook.site"],
+  "inboundSkip": [
+    ".vcap.me", ".xip.name", ".xip.io", ".sslip.io", ".nip.io", ".ngrok.io", ".pipedream.net", ".hopto.org", ".zapto.org",
+    ".sytes.net", ".ddns.net", ".webhook.site", ".requestcatcher.com", ".canarytokens.com", "transfer.sh", "webhook.site", "requestb.in"
+  ]
 }
