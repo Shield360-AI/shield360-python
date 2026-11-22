@@ -20,12 +20,19 @@ from shield360.rasp._attack_agents import (
     tripwire_page_for,
 )
 from shield360.rasp._context import current_context
-from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, verify_edge_context
+from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, edge_red_team, verify_edge_context
 from shield360.rasp._types import RaspDeterredError as DeterredError
 
 
 def _is_verified(edge: Any) -> bool:
     return isinstance(edge, dict) and edge.get("ct") in ("verified_agent", "verified_crawler")
+
+
+def _left_alone(edge: Any) -> bool:
+    """A client this feature never fingerprints, scores, marks, deters or
+    serves a tripwire: one Edge verified, or the organization's own red team
+    (Edge verified its X-Shield360-Red-Team header and named the run, rt)."""
+    return _is_verified(edge) or (isinstance(edge, dict) and edge_red_team(edge) is not None)
 
 
 def identify_rasp_user(user_id: Any) -> None:
@@ -54,7 +61,7 @@ def agents_before(ctx: Any, headers: Mapping[str, Any]) -> None:
             return
         cfg = e.attack_agent_config()
         ctx.agent_headers = headers
-        ctx.agent_verified = _is_verified(ctx.edge)
+        ctx.agent_verified = _left_alone(ctx.edge)
         values = [i.value for i in ctx.inputs if i.source == "request"]
         made, marked, _ = attack_agent_tracker().before(
             ctx.ip, ctx.user, ctx.path or "/", headers, values, cfg, time.time(), ctx.agent_verified
@@ -115,8 +122,11 @@ def agents_after(ctx: Any, status: Any) -> None:
         pass
 
 
-def check_tripwire(framework: str, method: str, path: str, ip: Optional[str]) -> Any:
-    """The tripwire URL ("Decision" 1): None when not a hit; else the deter
+def check_tripwire(
+    framework: str, method: str, path: str, ip: Optional[str], headers: Optional[Mapping[str, Any]] = None
+) -> Any:
+    """The tripwire URL ("Decision" 1): None when not a hit (or the client is
+    left alone: Edge verified it, or it is the red team); else the deter
     error in block mode, or True (answer 404). Never raises."""
     try:
         e = _engine
@@ -124,7 +134,7 @@ def check_tripwire(framework: str, method: str, path: str, ip: Optional[str]) ->
         if mode == "off":
             return None
         cfg = e.attack_agent_config()
-        if not cfg.tripwire or not hits_tripwire(path, cfg):
+        if not cfg.tripwire or not hits_tripwire(path, cfg) or _verified_early(method, path, headers or {}):
             return None
         made, _, _ = attack_agent_tracker().before(ip, None, path, {}, (), cfg, time.time())
         block = mode == "block"
@@ -163,6 +173,6 @@ def _verified_early(method: str, path: str, headers: Mapping[str, Any]) -> bool:
         keys = r.edge_keys if r is not None else []
         rid = headers.get(REQUEST_ID_HEADER)
         edge = verify_edge_context(keys, _header_text(value), method, _path_only(path), _header_text(rid) or None, cache=None)
-        return _is_verified(edge)
+        return _left_alone(edge)
     except Exception:  # pylint: disable=broad-exception-caught
         return False

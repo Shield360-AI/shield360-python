@@ -102,7 +102,7 @@ def _deceive(framework: str, method: str, target: Callable[[], Target], ip: Opti
     Fail open: any error lets the request through."""
     try:
         # SHIELD: AI attack agents — the tripwire URL is answered first (README "AI attack agents").
-        trip = check_tripwire(framework, method, target()[0], ip)
+        trip = check_tripwire(framework, method, target()[0], ip, headers)
         if trip is True:
             return _HIT
         if isinstance(trip, RaspBlockedError):

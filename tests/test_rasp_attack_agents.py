@@ -71,7 +71,8 @@ def test_sequence(seq):
     for i, st in enumerate(seq["steps"]):
         now = float(st["at"])
         headers = st.get("headers", V["defaultHeaders"])
-        verified = st.get("verified", False)
+        # A client Edge verified and the red team Edge named (rt) are both left alone.
+        verified = st.get("verified", False) or st.get("redTeam", False)
         if st.get("decoy"):
             deter = False
             mark = t.after(st["ip"], st.get("user"), st["path"], headers, st["status"], cfg, now, decoy=True, verified=verified)
@@ -250,7 +251,7 @@ def verify_verdict(value, rid):
     return out
 
 
-def edge_context(method, path, rid, ct="human"):
+def edge_context(method, path, rid, ct="human", **extra):
     now = int(time.time())
     payload = (
         base64.urlsafe_b64encode(
@@ -265,6 +266,7 @@ def edge_context(method, path, rid, ct="human"):
                     "risk": 0,
                     "trap": 0,
                     "fl": False,
+                    **extra,
                 }
             ).encode()
         )
@@ -337,6 +339,32 @@ def test_wsgi_verified_client_left_alone(sink):
         },
     )
     assert status == 200 and not sink.events
+
+
+def test_wsgi_red_team_left_alone(sink):
+    """The authorized red team (Edge verified its header and named the run in
+    the context, rt) is never marked or deterred, even from a marked address;
+    normal RASP detection still runs. Without the context it is deterred."""
+    setup(sink, {"tripwire": True})
+    mw = RaspWSGIMiddleware(app)
+    assert call(mw, "/", {"user-agent": "nuclei/3.3"})[0] == 429  # the address is marked now
+    sink.events.clear()
+    for path in ("/api/x", "/_debug/console/abc"):
+        rid = "req_redteam_" + str(len(path))
+        status, headers, _ = call(
+            mw,
+            path,
+            {
+                "user-agent": "nuclei/3.3",
+                "x-request-id": rid,
+                "x-shield360-edge-context": edge_context("GET", path, rid, "automation", rt="crun12345678"),
+            },
+        )
+        assert status != 429 and "x-shield360-verdict" not in headers
+    assert not [e for e in sink.events if e["attrs"]["shield360.rasp.attack"] == "ai_attack_agent"]
+    rid = "req_notredteam1"
+    plain = {"user-agent": "Mozilla/5.0", "x-request-id": rid, "x-shield360-edge-context": edge_context("GET", "/api/x", rid, "automation")}
+    assert call(mw, "/api/x", plain)[0] == 429
 
 
 def test_wsgi_off(sink):

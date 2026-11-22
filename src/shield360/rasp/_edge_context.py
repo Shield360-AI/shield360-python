@@ -33,7 +33,9 @@ _RID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _CAT = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _KEY = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _CLIENTS = {"human", "verified_crawler", "verified_agent", "automation", "suspected_agent", "unknown"}
-_CONTEXT_KEYS = {"rid", "iat", "exp", "m", "ph", "ct", "risk", "waf", "trap", "fl", "tp"}
+_CONTEXT_KEYS = {"rid", "iat", "exp", "m", "ph", "ct", "risk", "waf", "trap", "fl", "tp", "rt"}
+# A red team run id (rt): Edge verified the request's X-Shield360-Red-Team header.
+_RUN = re.compile(r"[a-z0-9]{8,40}")
 _VERDICT_KEYS = {"rid", "iat", "act", "cat", "src", "ttl"}
 
 EdgeKey = Tuple[str, bytes]
@@ -144,6 +146,9 @@ def verify_edge_context(
         waf = c.get("waf")
         if waf is not None and (not isinstance(waf, list) or len(waf) > 16 or not all(isinstance(w, str) and _CAT.match(w) for w in waf)):
             return None
+        rt = c.get("rt")
+        if rt is not None and (not isinstance(rt, str) or not _RUN.fullmatch(rt)):
+            return None
         if cache is not None and not cache.first("c:" + c["rid"], exp + _SKEW, n):
             return None
         c["fl"] = c.get("fl") is True
@@ -163,6 +168,12 @@ def sign_verdict(keys: List[EdgeKey], rid: str, act: str, cat: str, src: str = "
         return "v1.%s.%s.%s" % (kid, payload, _b64e(_mac(secret, "s360-verdict|v1|", payload)))
     except Exception:  # pylint: disable=broad-except
         return None
+
+
+def edge_red_team(c: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """The red team run Edge verified for this request (rt), or None."""
+    rt = c.get("rt") if c else None
+    return rt if isinstance(rt, str) else None
 
 
 def edge_says_suspect(c: Optional[Mapping[str, Any]]) -> bool:
