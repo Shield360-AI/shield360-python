@@ -33,9 +33,12 @@ _RID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _CAT = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _KEY = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _CLIENTS = {"human", "verified_crawler", "verified_agent", "automation", "suspected_agent", "unknown"}
-_CONTEXT_KEYS = {"rid", "iat", "exp", "m", "ph", "ct", "risk", "waf", "trap", "fl", "tp", "rt"}
+_CONTEXT_KEYS = {"rid", "iat", "exp", "m", "ph", "ct", "risk", "waf", "trap", "fl", "tp", "rt", "sid", "fp"}
 # A red team run id (rt): Edge verified the request's X-Shield360-Red-Team header.
 _RUN = re.compile(r"[a-z0-9]{8,40}")
+# Edge's security session (sid, the s360_sid cookie) and request fingerprint (fp).
+_SID = re.compile(r"[A-Za-z0-9_-]{22}")
+_FP = re.compile(r"[0-9a-f]{16}")
 _VERDICT_KEYS = {"rid", "iat", "act", "cat", "src", "ttl"}
 
 EdgeKey = Tuple[str, bytes]
@@ -156,6 +159,11 @@ def verify_edge_context(
             return None
         rt = c.get("rt")
         if rt is not None and (not isinstance(rt, str) or not _RUN.fullmatch(rt)):
+            return None
+        sid, fp = c.get("sid"), c.get("fp")
+        if "sid" in c and (not isinstance(sid, str) or not _SID.fullmatch(sid)):
+            return None
+        if "fp" in c and (not isinstance(fp, str) or not _FP.fullmatch(fp)):
             return None
         if cache is not None and not cache.first("c:" + c["rid"], exp + _SKEW, n):
             return None
