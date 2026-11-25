@@ -83,6 +83,8 @@
     { "id": "katana", "match": "katana/" },
     { "id": "dalfox", "match": "dalfox" },
     { "id": "bbot", "match": "bbot/" },
+    { "id": "artex-assessment", "match": "artex-assessment/" },
+    { "id": "nmap-nse", "match": "nmap scripting engine" },
     { "id": "nikto", "match": "nikto" },
     { "id": "wpscan", "match": "wpscan" },
     { "id": "feroxbuster", "match": "feroxbuster" },
