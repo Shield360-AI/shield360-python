@@ -43,7 +43,7 @@ from shield360.defend._engine import _compiled, _in_any
 from shield360.defend._honeypots import Honeypots, fingerprint, parse_honeypots
 from shield360.client_type import BreadthCounter, classify_client
 from shield360.rasp._config_client import RaspConfigClient, parse_public_keys
-from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, parse_edge_keys, verify_edge_context
+from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, ReplayCache, parse_edge_keys, verify_edge_context
 from shield360.rasp._deception import SuspiciousTable
 from shield360.rasp._rule_expr import parse_ip_bytes
 
@@ -346,6 +346,9 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         self._rates = RateTable()
         self._breadth = BreadthCounter()
         self._marks = SuspiciousTable(10_000, clock=self._clock)
+        # Defend keeps its own replay cache, as in every other SDK: RASP verifies the same request's
+        # Edge context against the module's cache, and the second check there would read as a replay.
+        self._edge_replay = ReplayCache()
         self._policy: Optional[Dict[str, Any]] = None
         self._stop = threading.Event()
         self._client: Optional[RaspConfigClient] = None
@@ -561,6 +564,7 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                     facts.get("rawPath") or facts["path"],
                     facts["headers"].get(REQUEST_ID_HEADER) or None,
                     self._clock(),
+                    self._edge_replay,
                 )
                 if edge:
                     facts["edge"] = {"ct": edge["ct"], "trap": edge["trap"], "fl": edge["fl"], "risk": edge["risk"]}

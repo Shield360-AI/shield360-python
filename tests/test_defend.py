@@ -306,3 +306,27 @@ def test_default_classifier_and_edge_context(tmp_path):
         }
     )
     assert crawler["decision"] == "allow"
+
+
+def test_edge_context_survives_rasp_verifying_it_first(tmp_path):
+    """RASP and Defend in one process both verify Edge's context for the same
+    request: Defend must still see it (it keeps its own replay cache), and a
+    replay on another request is still refused."""
+    from shield360.rasp._capture import capture_request  # pylint: disable=import-outside-toplevel
+    from shield360.rasp._edge_context import parse_edge_keys  # pylint: disable=import-outside-toplevel
+    from shield360.rasp._engine import RemoteConfig, set_remote_config  # pylint: disable=import-outside-toplevel
+
+    edge_key = b"0123456789abcdef0123456789abcdef"
+    keys = {"keys": [{"kid": "0a1b2c3d", "key": b64(edge_key)}]}
+    d = make(Server(claims(edgeContext=keys)), tmp_path, report=False)
+    set_remote_config(RemoteConfig(version="v", exp=time.time() + 3600, attacks={}, edge_keys=parse_edge_keys(keys)))
+    try:
+        rid = f"req_both_{int(time.time())}"
+        headers = {"x-shield360-edge-context": _ctx_header(edge_key, ct="suspected_agent", trap=2, fl=True, rid=rid), "x-request-id": rid}
+        assert (capture_request("wsgi", "GET", "/api/x", headers).edge or {}).get("trap") == 2
+        caught = d.defend({"method": "GET", "path": "/api/x", "ip": "203.0.113.16", "headers": headers})
+        assert caught["decision"] == "deny" and caught["reasons"] == ["trap_hit"]
+        replayed = d.defend({"method": "GET", "path": "/api/x", "ip": "203.0.113.17", "headers": dict(headers)})
+        assert replayed["decision"] != "deny" and "trap_hit" not in replayed["reasons"]
+    finally:
+        set_remote_config(None)
