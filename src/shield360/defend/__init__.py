@@ -43,7 +43,15 @@ from shield360.defend._engine import _compiled, _in_any
 from shield360.defend._honeypots import Honeypots, fingerprint, parse_honeypots
 from shield360.client_type import BreadthCounter, classify_client
 from shield360.rasp._config_client import RaspConfigClient, parse_public_keys
-from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, ReplayCache, parse_edge_keys, verify_edge_context
+from shield360.rasp._edge_context import (
+    CONTEXT_HEADER,
+    REQUEST_ID_HEADER,
+    VERDICT_HEADER,
+    ReplayCache,
+    hit_verdict,
+    parse_edge_keys,
+    verify_edge_context,
+)
 from shield360.rasp._deception import SuspiciousTable
 from shield360.rasp._rule_expr import parse_ip_bytes
 
@@ -441,6 +449,15 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                 }
             )
         merged = {**result, "reasons": result["reasons"] + reasons, "clientType": "suspected_ai_agent"}
+        # SHIELD: decoy and trap verdicts — Edge blocks the client fleet-wide when this hit blocks, else marks it.
+        e = facts.get("edge")
+        if e and e.get("rid"):
+            v = hit_verdict(
+                policy.get("edgeKeys") or [], e, ip, "block" if action == "block" and mode != "monitor" else "flag", "trap", "defend",
+                policy["traps"]["ttlSeconds"], iat=int(self._clock()),
+            )
+            if v:
+                merged["verdict"] = v
         if decoy:
             return {**merged, "decoy": decoy}
         if action == "monitor" or mode == "monitor":
@@ -567,7 +584,9 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                     self._edge_replay,
                 )
                 if edge:
-                    facts["edge"] = {"ct": edge["ct"], "trap": edge["trap"], "fl": edge["fl"], "risk": edge["risk"]}
+                    facts["edge"] = {"ct": edge["ct"], "trap": edge["trap"], "fl": edge["fl"], "risk": edge["risk"], "rid": edge["rid"]}
+                    if edge.get("rt"):
+                        facts["edge"]["rt"] = edge["rt"]
             edge_verified = (facts.get("edge") or {}).get("ct") in ("verified_agent", "verified_crawler")
             trap = bool(facts.get("ip")) and self._marks.is_suspicious(facts["ip"])
             # A client Edge's honeypots caught following a trail (level 2+) is a trap hit here too.
@@ -674,6 +693,7 @@ class Defend:  # pylint: disable=too-many-instance-attributes
         def middleware(environ, start_response):
             result = self.defend(environ)
             environ["shield360.defend"] = result
+            start_response = _wsgi_verdict(start_response, result.get("verdict"))
             if result["decision"] == "allow" and result.get("decoy"):
                 d = result["decoy"]
                 start_response(
@@ -706,6 +726,7 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                 result = defend.defend(scope)
                 scope.setdefault("state", {})
                 scope["state"]["shield360_defend"] = result
+                send = _asgi_verdict(send, result.get("verdict"))
                 if result["decision"] == "allow" and result.get("decoy"):
                     d = result["decoy"]
                     await send(
@@ -735,6 +756,35 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                 return None
 
         return DefendASGIMiddleware
+
+
+def _wsgi_verdict(start_response: Callable, verdict: Optional[str]) -> Callable:
+    """SHIELD: decoy and trap verdicts — a start_response that adds a trap hit's verdict, when there is one."""
+    if not verdict:
+        return start_response
+
+    # A RASP verdict set later in the same request (inside this middleware) is kept: the response carries one.
+    def sr(status, headers, exc_info=None):
+        h = list(headers) if any(x[0].lower() == VERDICT_HEADER.lower() for x in headers) else list(headers) + [(VERDICT_HEADER, verdict)]
+        return start_response(status, h) if exc_info is None else start_response(status, h, exc_info)
+
+    return sr
+
+
+def _asgi_verdict(send: Callable, verdict: Optional[str]) -> Callable:
+    """SHIELD: decoy and trap verdicts — an ASGI send that adds a trap hit's verdict to the response start, when there is one."""
+    if not verdict:
+        return send
+    name = VERDICT_HEADER.lower().encode("latin-1")
+
+    async def wrapped(message):
+        if message.get("type") == "http.response.start":
+            headers = list(message.get("headers") or [])
+            if not any(bytes(h[0]).lower() == name for h in headers):
+                message = {**message, "headers": headers + [(name, verdict.encode("latin-1"))]}
+        await send(message)
+
+    return wrapped
 
 
 def create_defend(app: str, **options: Any) -> Defend:

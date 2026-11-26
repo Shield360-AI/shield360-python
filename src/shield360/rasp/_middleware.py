@@ -28,7 +28,8 @@ from shield360.rasp._hooks import response as _response
 from shield360.rasp._normalize import flatten
 from shield360.rasp._types import RaspBlockedError, block_answer
 # SHIELD: AI attack agents — the before-handler check, the scoring, the tripwire and the deter answer (README "AI attack agents").
-from shield360.rasp._agents import agents_after, agents_before, agents_decoy, check_tripwire
+from shield360.rasp._agents import agents_after, agents_before, agents_decoy, check_tripwire, decoy_verdict
+from shield360.rasp._edge_context import VERDICT_HEADER
 
 MAX_READ = 1024 * 1024
 BODY_METHODS = frozenset(("POST", "PUT", "PATCH", "DELETE"))
@@ -96,11 +97,18 @@ Target = Tuple[str, Optional[bytes]]
 
 
 def _deceive(
-    framework: str, method: str, target: Callable[[], Target], ip: Optional[str], headers: Optional[Mapping[str, Any]] = None
+    framework: str,
+    method: str,
+    target: Callable[[], Target],
+    ip: Optional[str],
+    headers: Optional[Mapping[str, Any]] = None,
+    verdict: Optional[List[str]] = None,
 ) -> Deceived:
     """README "Deception": runs before anything else the middleware does.
     ``target`` gives the request path as received (for the event route) and
     its bytes decoded once (None: an invalid escape, which hits nothing).
+    ``verdict``, when given, receives the signed X-Shield360-Verdict a decoy
+    hit's 404 carries (SHIELD: decoy and trap verdicts).
     Fail open: any error lets the request through."""
     try:
         # SHIELD: AI attack agents — the tripwire URL is answered first (README "AI attack agents").
@@ -120,6 +128,11 @@ def _deceive(
                 return None
             suspicious_table().mark(ip, d.ttl_seconds)
             report_deception(RULE_HIT, mode, framework, method, decoy, path)
+            # SHIELD: decoy and trap verdicts — behind Edge, the 404 tells every Edge to block (or mark) the client.
+            if verdict is not None:
+                v = decoy_verdict(method, path, ip, headers, mode == "block", d.ttl_seconds)
+                if v:
+                    verdict.append(v)
             # SHIELD: AI attack agents — a decoy hit adds to the behavior score; the 404 may carry the tripwire page.
             page = agents_decoy(framework, method, path, ip, headers)
             return _TripwirePage(page) if page else _HIT
@@ -299,6 +312,33 @@ def _wsgi_blocked(start_response: Callable, e: RaspBlockedError, exc_info: Any =
     return [body]
 
 
+def _wsgi_with_verdict(start_response: Callable, verdict: List[str]) -> Callable:
+    """SHIELD: decoy and trap verdicts — a start_response that adds a decoy hit's verdict, when there is one."""
+    if not verdict:
+        return start_response
+
+    def sr(status: str, headers: List[Tuple[str, str]], exc_info: Any = None) -> Any:
+        h = [x for x in headers if x[0].lower() != VERDICT_HEADER.lower()] + [(VERDICT_HEADER, verdict[0])]
+        return start_response(status, h) if exc_info is None else start_response(status, h, exc_info)
+
+    return sr
+
+
+def _asgi_with_verdict(send: Callable, verdict: List[str]) -> Callable:
+    """SHIELD: decoy and trap verdicts — an ASGI send that adds a decoy hit's verdict to the response start, when there is one."""
+    if not verdict:
+        return send
+
+    async def wrapped(message: Dict[str, Any]) -> None:
+        if message.get("type") == "http.response.start":
+            name = VERDICT_HEADER.lower().encode("latin-1")
+            headers = [h for h in (message.get("headers") or []) if bytes(h[0]).lower() != name]
+            message = {**message, "headers": headers + [(name, verdict[0].encode("latin-1"))]}
+        await send(message)
+
+    return wrapped
+
+
 def _wsgi_page(start_response: Callable, page: str) -> List[bytes]:
     """SHIELD: AI attack agents — the decoy 404 with the LLM tripwire page."""
     body = page.encode("utf-8")
@@ -392,17 +432,19 @@ class RaspWSGIMiddleware:
     def __call__(self, environ: Dict[str, Any], start_response: Callable) -> Iterable[bytes]:
         if not is_active() or _outer_captured():
             return self.app(environ, start_response)
+        verdict: List[str] = []
         deceived = _deceive(
             self.framework,
             str(environ.get("REQUEST_METHOD") or "GET").upper(),
             lambda: _environ_target(environ),
             _ip_of(environ.get("REMOTE_ADDR")),
             _environ_headers(environ),
+            verdict,
         )
         if isinstance(deceived, _TripwirePage):
-            return _wsgi_page(start_response, deceived)
+            return _wsgi_page(_wsgi_with_verdict(start_response, verdict), deceived)
         if deceived is _HIT:
-            return self.not_found(environ, start_response)
+            return self.not_found(environ, _wsgi_with_verdict(start_response, verdict))
         if isinstance(deceived, RaspBlockedError):
             return _wsgi_blocked(start_response, deceived)
 
@@ -573,14 +615,15 @@ class RaspASGIMiddleware:
             await self.app(scope, receive, send)
             return
         method = str(scope.get("method") or "GET").upper()
+        verdict: List[str] = []
         deceived = _deceive(
-            self.framework, method, lambda: _asgi_target(scope), _asgi_client(scope), lower_headers(scope.get("headers") or [])
+            self.framework, method, lambda: _asgi_target(scope), _asgi_client(scope), lower_headers(scope.get("headers") or []), verdict
         )
         if isinstance(deceived, _TripwirePage):
-            await _asgi_text(send, 404, deceived.encode("utf-8"), "text/html; charset=utf-8")
+            await _asgi_text(_asgi_with_verdict(send, verdict), 404, deceived.encode("utf-8"), "text/html; charset=utf-8")
             return
         if deceived is _HIT:
-            await self._not_found(scope, receive, send)
+            await self._not_found(scope, receive, _asgi_with_verdict(send, verdict))
             return
         if isinstance(deceived, RaspBlockedError):
             await _asgi_blocked(send, deceived)
@@ -812,15 +855,28 @@ class RaspDjangoMiddleware:
             return self.get_response(request)
         meta = request.META
         method = str(meta.get("REQUEST_METHOD") or "GET").upper()
-        deceived = _deceive("django", method, lambda: _django_target(request), _ip_of(meta.get("REMOTE_ADDR")), _environ_headers(meta))
+        verdict: List[str] = []
+        deceived = _deceive("django", method, lambda: _django_target(request), _ip_of(meta.get("REMOTE_ADDR")), _environ_headers(meta), verdict)
         if isinstance(deceived, _TripwirePage):
             from django.http import HttpResponse
 
             page = HttpResponse(str(deceived), status=404, content_type="text/html; charset=utf-8")
             page["Cache-Control"] = "no-store"
+            if verdict:
+                page[VERDICT_HEADER] = verdict[0]
             return page
         if deceived is _HIT:
-            _django_not_found(request)
+            if not verdict:
+                _django_not_found(request)
+            # SHIELD: decoy and trap verdicts — Django's own 404 response for the decoy, with the verdict on it.
+            try:
+                _django_not_found(request)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                from django.core.handlers.exception import response_for_exception
+
+                resp = response_for_exception(request, exc)
+                resp[VERDICT_HEADER] = verdict[0]
+                return resp
         if isinstance(deceived, RaspBlockedError):
             return _django_blocked(deceived)
         ctx, blocked = _capture_environ(meta, "django", lambda: request.body)

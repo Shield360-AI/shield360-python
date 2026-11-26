@@ -211,3 +211,32 @@ def edge_says_suspect(c: Optional[Mapping[str, Any]]) -> bool:
         and c.get("ct") not in ("verified_crawler", "verified_agent")
         and (c.get("fl") is True or c.get("trap", 0) >= 2 or c.get("risk", 0) >= 70)
     )
+
+
+# SHIELD: decoy and trap verdicts — the reserved test identity Edge's simulated hits use (TEST-NET-1): never blocked.
+SIMULATED_CLIENT = "192.0.2.1"
+
+
+def hit_verdict(
+    keys: List[EdgeKey],
+    edge: Optional[Mapping[str, Any]],
+    ip: Optional[str],
+    act: str,
+    cat: str,
+    src: str,
+    ttl: int,
+    iat: Optional[int] = None,
+) -> Optional[str]:
+    """SHIELD: decoy and trap verdicts (edge-deception-spec "What each layer
+    does") — the signed verdict a decoy or trap hit sends Edge, for a request
+    Edge's verified context names. None without a context, for a verified
+    crawler or agent, a red team run (rt) or the simulated client. Never raises."""
+    try:
+        if not edge or not keys or edge.get("ct") in ("verified_crawler", "verified_agent") or edge_red_team(edge) is not None:
+            return None
+        a = ip[7:] if ip and ip.startswith("::ffff:") else ip
+        if a == SIMULATED_CLIENT:
+            return None
+        return sign_verdict(keys, str(edge.get("rid") or ""), act, cat, src, int(ttl), iat=iat)
+    except Exception:  # pylint: disable=broad-except
+        return None

@@ -20,7 +20,7 @@ from shield360.rasp._attack_agents import (
     tripwire_page_for,
 )
 from shield360.rasp._context import current_context
-from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, edge_red_team, verify_edge_context
+from shield360.rasp._edge_context import CONTEXT_HEADER, REQUEST_ID_HEADER, edge_red_team, hit_verdict, verify_edge_context
 from shield360.rasp._types import RaspDeterredError as DeterredError
 
 
@@ -160,6 +160,24 @@ def agents_decoy(
         if m is not None:
             e.report_attack_agent("attack_agent.behavior", mode == "block", m, framework, method, None, path)
         return tripwire_page_for(ip, cfg, verified)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def decoy_verdict(method: str, path: str, ip: Optional[str], headers: Optional[Mapping[str, Any]], block: bool, ttl_seconds: int) -> Optional[str]:
+    """SHIELD: decoy and trap verdicts (README "Deception", "Protection
+    triangle") — the verdict a decoy hit sends Edge: block when the decision is
+    blocked, else flag, for the deception TTL. Edge's context is verified
+    without a replay cache (the request never reaches the app). Never raises."""
+    try:
+        value = (headers or {}).get(CONTEXT_HEADER)
+        r = _engine.remote_config()
+        keys = r.edge_keys if r is not None else []
+        if not value or not keys:
+            return None
+        rid = (headers or {}).get(REQUEST_ID_HEADER)
+        edge = verify_edge_context(keys, _header_text(value), method, _path_only(path), _header_text(rid) or None, cache=None)
+        return hit_verdict(keys, edge, ip, "block" if block else "flag", "deception", "rasp", ttl_seconds)
     except Exception:  # pylint: disable=broad-exception-caught
         return None
 
