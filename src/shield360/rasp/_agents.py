@@ -164,10 +164,11 @@ def agents_decoy(
         return None
 
 
-def decoy_verdict(method: str, path: str, ip: Optional[str], headers: Optional[Mapping[str, Any]], block: bool, ttl_seconds: int) -> Optional[str]:
+def decoy_verdict(method: str, path: str, ip: Optional[str], headers: Optional[Mapping[str, Any]], ttl_seconds: int) -> Optional[str]:
     """SHIELD: decoy and trap verdicts (README "Deception", "Protection
-    triangle") — the verdict a decoy hit sends Edge: block when the decision is
-    blocked, else flag, for the deception TTL. Edge's context is verified
+    triangle") — the verdict a decoy hit sends Edge: always block, whatever the
+    app's own action (its answer to the request is unchanged), for the
+    deception TTL. Edge's context is verified
     without a replay cache (the request never reaches the app). Never raises."""
     try:
         value = (headers or {}).get(CONTEXT_HEADER)
@@ -177,7 +178,7 @@ def decoy_verdict(method: str, path: str, ip: Optional[str], headers: Optional[M
             return None
         rid = (headers or {}).get(REQUEST_ID_HEADER)
         edge = verify_edge_context(keys, _header_text(value), method, _path_only(path), _header_text(rid) or None, cache=None)
-        return hit_verdict(keys, edge, ip, "block" if block else "flag", "deception", "rasp", ttl_seconds)
+        return hit_verdict(keys, edge, ip, "block", "deception", "rasp", ttl_seconds)
     except Exception:  # pylint: disable=broad-exception-caught
         return None
 

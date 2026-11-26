@@ -128,9 +128,9 @@ def _deceive(
                 return None
             suspicious_table().mark(ip, d.ttl_seconds)
             report_deception(RULE_HIT, mode, framework, method, decoy, path)
-            # SHIELD: decoy and trap verdicts — behind Edge, the 404 tells every Edge to block (or mark) the client.
+            # SHIELD: decoy and trap verdicts — behind Edge, the 404 tells every Edge to block the client, in monitor too.
             if verdict is not None:
-                v = decoy_verdict(method, path, ip, headers, mode == "block", d.ttl_seconds)
+                v = decoy_verdict(method, path, ip, headers, d.ttl_seconds)
                 if v:
                     verdict.append(v)
             # SHIELD: AI attack agents — a decoy hit adds to the behavior score; the 404 may carry the tripwire page.

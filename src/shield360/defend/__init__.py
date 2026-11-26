@@ -449,11 +449,11 @@ class Defend:  # pylint: disable=too-many-instance-attributes
                 }
             )
         merged = {**result, "reasons": result["reasons"] + reasons, "clientType": "suspected_ai_agent"}
-        # SHIELD: decoy and trap verdicts — Edge blocks the client fleet-wide when this hit blocks, else marks it.
+        # SHIELD: decoy and trap verdicts — a trap hit always blocks the client fleet-wide at Edge, whatever the local action or mode.
         e = facts.get("edge")
         if e and e.get("rid"):
             v = hit_verdict(
-                policy.get("edgeKeys") or [], e, ip, "block" if action == "block" and mode != "monitor" else "flag", "trap", "defend",
+                policy.get("edgeKeys") or [], e, ip, "block", "trap", "defend",
                 policy["traps"]["ttlSeconds"], iat=int(self._clock()),
             )
             if v:

@@ -110,10 +110,14 @@ def test_rasp_decoy_hit_behind_edge_blocks_with_the_deception_ttl(sink):
     assert sink.events[-1]["attrs"]["shield360.rasp.rule"] == "deception.hit"
 
 
-def test_rasp_decoy_hit_flags_in_monitor_and_sends_nothing_when_exempt(sink):
+def test_rasp_decoy_hit_blocks_at_edge_in_monitor_and_sends_nothing_when_exempt(sink):
     signed("monitor")
     rid, h = ctx("/wp-admin")
-    assert verdict_of(wsgi("/wp-admin", rid=rid, header=h)["headers"][VERDICT_HEADER])["act"] == "flag"
+    out = wsgi("/wp-admin", rid=rid, header=h)
+    # The app's own answer is unchanged (the decoy 404); Edge is still told to block.
+    assert out["status"].startswith("404")
+    v = verdict_of(out["headers"][VERDICT_HEADER])
+    assert v == {**v, "rid": rid, "act": "block", "cat": "deception", "src": "rasp", "ttl": 1200}
     signed("block")
     assert VERDICT_HEADER not in wsgi("/wp-admin")["headers"]
     for over, ip in (({"ct": "verified_crawler"}, "203.0.113.8"), ({"rt": "crun12345678"}, "203.0.113.9"), ({}, "192.0.2.1")):
@@ -181,3 +185,19 @@ def test_defend_trap_hit_behind_edge_blocks_cat_trap_src_defend(tmp_path):
     env = {"REQUEST_METHOD": "GET", "PATH_INFO": path, "QUERY_STRING": "", "REMOTE_ADDR": "203.0.113.43", "HTTP_USER_AGENT": "agent/1", "HTTP_X_SHIELD360_EDGE_CONTEXT": h, "HTTP_X_REQUEST_ID": rid}
     d.wsgi(lambda e, sr: [b"app"])(env, start_response)
     assert verdict_of(seen[VERDICT_HEADER])["act"] == "block"
+
+
+def test_defend_trap_hit_blocks_at_edge_in_monitor(tmp_path):
+    from test_defend import Server, claims, make  # pylint: disable=import-outside-toplevel
+
+    edge = {"keys": [{"kid": "0a1b2c3d", "key": b64(EDGE_KEY)}]}
+    for hp_mode, env in (("monitor", {}), ("block", {"SHIELD360_DEFEND": "monitor"})):
+        hp = {"enabled": True, "mode": hp_mode, "secret": b64(SECRET)}
+        d = make(Server(claims(honeypots=hp, edgeContext=edge, traps={"action": "block", "ttlSeconds": 1800})), tmp_path / hp_mode, report=False, env=env)
+        ip = "203.0.113.50"
+        path = d.crumbs({"method": "GET", "path": "/", "ip": ip, "headers": {"user-agent": "agent/1"}})["path"]
+        rid, h = ctx(path)
+        r = d.defend({"method": "GET", "path": path, "ip": ip, "headers": {"user-agent": "agent/1", "x-shield360-edge-context": h, "x-request-id": rid}})
+        assert r.get("decision") != "deny"
+        v = verdict_of(r["verdict"])
+        assert v == {**v, "rid": rid, "act": "block", "cat": "trap", "src": "defend", "ttl": 1800}
